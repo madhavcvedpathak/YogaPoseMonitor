@@ -1,20 +1,16 @@
 import os
-import cv2
-import json
 import time
-import threading
+import json
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from flask import Flask, render_template, Response, request, send_file, jsonify
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.pdfgen import canvas
+from flask import Flask, render_template, request, send_file, jsonify
+from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
-import mediapipe as mp
+from reportlab.lib.enums import TA_CENTER
 import jwt
 from functools import wraps
 
@@ -26,34 +22,28 @@ from firebase_admin import credentials, firestore, auth
 # Initialize Flask app
 app = Flask(__name__)
 
-# Directories
+# Directories (for report storage)
 REPORTS_DIR = "reports"
-LIVE_JSON_DIR = "live_json"
-# os.makedirs is safe to call even if directories exist
 os.makedirs(REPORTS_DIR, exist_ok=True)
-os.makedirs(LIVE_JSON_DIR, exist_ok=True)
+# LIVE_JSON_DIR is no longer needed but kept for os.makedirs consistency
+os.makedirs("live_json", exist_ok=True) 
 
 # --- FIREBASE SETUP ---
-# ⚠️ SECURITY WARNING: Netlify/Serverless environment MUST use the environment variable.
-# On local testing, this will try to load the 'firebase_service_account.json' file.
 try:
     CREDENTIALS_PATH = os.environ.get('FIREBASE_CREDENTIALS', 'firebase_service_account.json')
     
     if os.path.exists(CREDENTIALS_PATH) or os.environ.get('FIREBASE_CREDENTIALS'):
-        # If running on Netlify/Vercel, CREDENTIALS_PATH will contain the raw JSON string.
         if CREDENTIALS_PATH.startswith('{'):
-            # Load credentials from the JSON string provided by the environment variable
             import json as json_lib
             cred = credentials.Certificate(json_lib.loads(CREDENTIALS_PATH))
         else:
-            # Load credentials from the file path (Local development)
             cred = credentials.Certificate(CREDENTIALS_PATH)
             
-        firebase_admin.initialize_app(cred)
+        if not firebase_admin._apps: # Prevent re-initialization error
+            firebase_admin.initialize_app(cred)
         db = firestore.client()
         print("✅ Firebase initialized successfully.")
     else:
-        # This will only happen if testing locally without the file, or if environment variable is missing
         print("⚠️ Firebase credentials not found. DB functions disabled.")
         db = None
 
@@ -62,20 +52,13 @@ except Exception as e:
     db = None
 
 # Global state
-camera_active = False
-session_active = False
-pose_log = []
+session_active = False 
+pose_log = [] # Populated by the /log_pose endpoint.
 current_user_uid = None
 current_user_display_name = "User" 
-video_capture = None
-pose_detector = None
 last_report_path = None
 
-# MediaPipe Pose setup
-mp_pose = mp.solutions.pose
-mp_drawing = mp.solutions.drawing_utils
-
-# --- JWT DECORATOR ---
+# --- JWT DECORATOR (KEPT) ---
 def jwt_required(f):
     """Decorator to protect routes, requiring a valid Firebase ID Token (JWT)."""
     @wraps(f)
@@ -90,8 +73,8 @@ def jwt_required(f):
         try:
             decoded_token = auth.verify_id_token(id_token)
             current_user_uid = decoded_token['uid']
-            # Get user name from the JWT payload sent by the frontend's login process
-            user_name_from_request = request.get_json().get('user_name', f"User_{current_user_uid[-4:]}")
+            request_data = request.get_json() if request.get_json() else {}
+            user_name_from_request = request_data.get('user_name', f"User_{current_user_uid[-4:]}")
             current_user_display_name = user_name_from_request
             
         except Exception as e:
@@ -102,167 +85,7 @@ def jwt_required(f):
     return decorated_function
 # --- END JWT DECORATOR ---
 
-
-def calculate_angle(a, b, c):
-    """Calculate angle in degrees between three 2D points (a-b-c)."""
-    a = np.array(a)
-    b = np.array(b)
-    c = np.array(c)
-    
-    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
-    angle = np.abs(radians * 180.0 / np.pi)
-    
-    if angle > 180.0:
-        angle = 360 - angle
-        
-    return angle
-
-def analyze_yoga_pose(landmarks):
-    """Analyze pose and identify yoga posture (12 Poses of Surya Namaskar)"""
-    try:
-        # --- Extract key points ---
-        get_point = lambda p: [landmarks[p.value].x, landmarks[p.value].y]
-        
-        left_shoulder, left_elbow, left_wrist = get_point(mp_pose.PoseLandmark.LEFT_SHOULDER), get_point(mp_pose.PoseLandmark.LEFT_ELBOW), get_point(mp_pose.PoseLandmark.LEFT_WRIST)
-        left_hip, left_knee, left_ankle = get_point(mp_pose.PoseLandmark.LEFT_HIP), get_point(mp_pose.PoseLandmark.LEFT_KNEE), get_point(mp_pose.PoseLandmark.LEFT_ANKLE)
-        
-        right_shoulder, right_elbow, right_wrist = get_point(mp_pose.PoseLandmark.RIGHT_SHOULDER), get_point(mp_pose.PoseLandmark.RIGHT_ELBOW), get_point(mp_pose.PoseLandmark.RIGHT_WRIST)
-        right_hip, right_knee, right_ankle = get_point(mp_pose.PoseLandmark.RIGHT_HIP), get_point(mp_pose.PoseLandmark.RIGHT_KNEE), get_point(mp_pose.PoseLandmark.RIGHT_ANKLE)
-        
-        # --- Calculate angles ---
-        left_elbow_angle = calculate_angle(left_shoulder, left_elbow, left_wrist)
-        right_elbow_angle = calculate_angle(right_shoulder, right_elbow, right_wrist)
-        left_knee_angle = calculate_angle(left_hip, left_knee, left_ankle)
-        right_knee_angle = calculate_angle(right_hip, right_knee, right_ankle)
-        left_hip_angle = calculate_angle(left_shoulder, left_hip, left_knee)
-        right_hip_angle = calculate_angle(right_shoulder, right_hip, right_knee)
-        left_shldr_angle = calculate_angle(left_elbow, left_shoulder, left_hip)
-        right_shldr_angle = calculate_angle(right_elbow, right_shoulder, right_hip)
-
-        # Helper flags
-        arms_straight = (left_elbow_angle > 160 and right_elbow_angle > 160)
-        legs_straight = (left_knee_angle > 160 and right_knee_angle > 160)
-        
-        # --- Pose Classification Logic (Synchronized with JS Keys: Pranamasana, Dandasana) ---
-        pose_name = "Unknown"
-        confidence = 0.50
-        
-        # 1. & 12. Pranamasana (Prayer/Mountain Pose)
-        if legs_straight and left_hip_angle > 160 and right_hip_angle > 160 and left_shldr_angle > 160 and right_shldr_angle > 160:
-            pose_name = "Pranamasana" 
-            confidence = 0.95
-        
-        # 2. & 11. Hasta Uttanasana (Raised Arms Pose)
-        elif legs_straight and left_hip_angle > 160 and right_hip_angle > 160 and left_shldr_angle < 40 and right_shldr_angle < 40 and arms_straight:
-            pose_name = "Hasta Uttanasana"
-            confidence = 0.90
-        
-        # 3. & 10. Uttanasana (Standing Forward Bend)
-        elif legs_straight and left_hip_angle < 90 and right_hip_angle < 90:
-            pose_name = "Uttanasana"
-            confidence = 0.85
-
-        # 4. & 9. Ashwa Sanchalanasana (Low Lunge / Equestrian Pose)
-        elif (left_knee_angle < 100 and right_knee_angle > 160 and left_hip_angle < 100 and right_hip_angle > 140) or \
-             (right_knee_angle < 100 and left_knee_angle > 160 and right_hip_angle < 100 and left_hip_angle > 140):
-            pose_name = "Ashwa Sanchalanasana"
-            confidence = 0.88
-            
-        # 5. Dandasana (Plank Pose - Using the JS key Dandasana for consistency, even if detection is Phalakasana)
-        elif legs_straight and abs(left_hip_angle - 180) < 20 and abs(right_hip_angle - 180) < 20 and arms_straight and abs(left_shldr_angle - 180) < 20 and abs(right_shldr_angle - 180) < 20:
-            pose_name = "Dandasana" 
-            confidence = 0.80
-
-        # 6. Ashtanga Namaskara (Knees-Chest-Chin)
-        elif left_hip_angle > 100 and right_hip_angle > 100 and left_knee_angle < 100 and right_knee_angle < 100:
-            pose_name = "Ashtanga Namaskara"
-            confidence = 0.70
-
-        # 7. Bhujangasana (Cobra Pose)
-        elif left_hip_angle > 160 and right_hip_angle > 160 and left_knee_angle > 160 and right_knee_angle > 160 and abs(left_shldr_angle - 180) < 20 and abs(right_shldr_angle - 180) < 20 and left_elbow_angle < 160 and right_elbow_angle < 160:
-            pose_name = "Bhujangasana"
-            confidence = 0.80
-            
-        # 8. Adho Mukha Svanasana (Downward-Facing Dog)
-        elif left_hip_angle < 110 and right_hip_angle < 110 and legs_straight and arms_straight:
-            pose_name = "Adho Mukha Svanasana"
-            confidence = 0.92
-
-        # --- Note: The 'Other Poses' detection block is kept for demonstration/robustness ---
-        elif (left_knee_angle < 100 and right_knee_angle > 160) or (right_knee_angle < 100 and left_knee_angle > 160):
-            if left_elbow_angle > 160 and right_elbow_angle > 160:
-                pose_name = "Tree Pose (Vrksasana)"
-                confidence = max(confidence, 0.85)
-        # ------------------------------------------------------------------------------------
-        
-        return {
-            'pose': pose_name,
-            'confidence': round(confidence, 2),
-            'left_elbow': round(left_elbow_angle, 2),
-            'right_elbow': round(right_elbow_angle, 2),
-            'left_knee': round(left_knee_angle, 2),
-            'right_knee': round(right_knee_angle, 2),
-            'left_hip': round(left_hip_angle, 2),
-            'right_hip': round(right_hip_angle, 2),
-            'timestamp': time.time()
-        }
-    except Exception as e:
-        # print(f"Error analyzing pose: {e}") 
-        return None
-
-def generate_frames():
-    """Generate video frames with pose detection"""
-    # NOTE: This route may be unstable/slow on Netlify/Lambda due to video stream limitations.
-    global camera_active, session_active, pose_log, video_capture, pose_detector
-    
-    video_capture = cv2.VideoCapture(0)
-    pose_detector = mp_pose.Pose(
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    )
-    
-    frame_count = 0
-    
-    while camera_active:
-        success, frame = video_capture.read()
-        if not success: break
-        
-        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        image.flags.writeable = False
-        
-        results = pose_detector.process(image)
-        
-        image.flags.writeable = True
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        
-        if results.pose_landmarks:
-            mp_drawing.draw_landmarks(
-                image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
-                mp_drawing.DrawingSpec(color=(245, 117, 66), thickness=2, circle_radius=2),
-                mp_drawing.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2)
-            )
-            
-            if session_active:
-                frame_count += 1
-                if frame_count % 15 == 0:
-                    pose_data = analyze_yoga_pose(results.pose_landmarks.landmark)
-                    if pose_data:
-                        pose_log.append(pose_data)
-        
-            if session_active and pose_log:
-                current_pose = pose_log[-1]['pose']
-                confidence = pose_log[-1]['confidence']
-                cv2.putText(image, f"Pose: {current_pose}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                cv2.putText(image, f"Confidence: {confidence:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            
-        ret, buffer = cv2.imencode('.jpg', image)
-        frame = buffer.tobytes()
-        
-        yield (b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-    
-    if video_capture: video_capture.release()
-    if pose_detector: pose_detector.close()
-
+# --- PDF GENERATION (ADJUSTED TO USE NEW pose_log STRUCTURE) ---
 def generate_pdf_report(user_name, end_time):
     """Generate professional AyurSutra PDF report with dynamic recommendations."""
     global last_report_path
@@ -295,7 +118,7 @@ def generate_pdf_report(user_name, end_time):
         else:
             duration_min = 0.0
         
-        avg_conf = df['confidence'].mean()
+        avg_conf = df['confidence'].mean() if not df.empty else 0.0
         
         summary_data = [
             ['Participant ID', user_name, 'Date', end_time.strftime('%B %d, %Y')],
@@ -312,7 +135,7 @@ def generate_pdf_report(user_name, end_time):
         
         data = [['Pose Name', 'Frames Detected', 'Total Time (Seconds)']]
         for pose, count in pose_counts.items():
-            duration_sec = count * 0.5
+            duration_sec = count * 0.5 # Assuming 1 log entry every ~0.5 seconds from JS
             data.append([pose, str(count), f"{duration_sec:.1f} s"])
         
         table = Table(data, colWidths=[3.5*inch, 1.5*inch, 1.5*inch])
@@ -336,12 +159,6 @@ def generate_pdf_report(user_name, end_time):
             if not brief_poses.empty:
                 brief_pose_name = brief_poses.idxmin()
                 recommendations.append(f"• **{brief_pose_name}** was held briefly ({brief_poses.min():.1f} seconds). Practice holding fundamental poses for **15 to 30 seconds** to maximize physical benefit.")
-
-        avg_left_hip = df['left_hip'].mean()
-        avg_right_hip = df['right_hip'].mean()
-        hip_diff = abs(avg_left_hip - avg_right_hip)
-        if hip_diff > 10:
-            recommendations.append(f"• Hips Balance Check: A notable difference of {hip_diff:.1f}° was observed in hip alignment. Work on keeping your hips level and square in standing positions.")
         
         recommendations.append("• Progression Goal: Concentrate on gaining more flexibility or depth in the postures where you spent the least amount of time.")
 
@@ -358,8 +175,9 @@ def generate_pdf_report(user_name, end_time):
     print(f"✅ Report generated: {report_path}")
     last_report_path = report_path
     return report_path
+# --- END PDF GENERATION ---
 
-# --- FIREBASE STORAGE FUNCTION ---
+# --- FIREBASE STORAGE FUNCTION (KEPT) ---
 def save_session_to_firestore(uid, session_data):
     """Saves the session data to the Firestore database."""
     if db is None: return False
@@ -379,28 +197,27 @@ def index():
     """Main page"""
     return render_template('index.html')
 
-@app.route('/video_feed')
-def video_feed():
-    """Video streaming route"""
-    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+# --- NEW ROUTE: Receives real-time pose data from the Frontend (JS) ---
+@app.route('/log_pose', methods=['POST'])
+@jwt_required 
+def log_pose():
+    """Receives pose data from frontend and appends to pose_log if session is active."""
+    global pose_log, session_active
+    
+    if not session_active:
+        return jsonify({'status': 'info', 'message': 'Session is not active.'}), 200
 
-@app.route('/start_camera', methods=['POST'])
-def start_camera():
-    """Start camera (no auth required for camera stream)"""
-    global camera_active
-    if not camera_active:
-        camera_active = True
-        return jsonify({'status': 'success', 'message': 'Camera started'})
-    return jsonify({'status': 'info', 'message': 'Camera already active'})
+    try:
+        data = request.get_json()
+        if data and 'pose_data' in data:
+            pose_log.extend(data['pose_data'])
+            return jsonify({'status': 'success', 'message': f'Logged {len(data["pose_data"])} poses.'}), 200
+        
+        return jsonify({'status': 'error', 'message': 'Invalid pose data format.'}), 400
+    except Exception as e:
+        print(f"Error logging pose data: {e}")
+        return jsonify({'status': 'error', 'message': 'Failed to process pose data.'}), 500
 
-@app.route('/stop_camera', methods=['POST'])
-def stop_camera():
-    """Stop camera (no auth required)"""
-    global camera_active, session_active
-    camera_active = False
-    session_active = False
-    time.sleep(1)
-    return jsonify({'status': 'success', 'message': 'Camera stopped'})
 
 @app.route('/start_session', methods=['POST'])
 @jwt_required 
@@ -408,14 +225,8 @@ def start_session():
     """Start yoga session (protected route)"""
     global session_active, pose_log
     
-    if not camera_active:
-        return jsonify({'status': 'error', 'message': 'Please start camera first'}), 400
-    
     session_active = True
-    pose_log = []
-    
-    for f in os.listdir(LIVE_JSON_DIR):
-        if f.endswith('.json'): os.remove(os.path.join(LIVE_JSON_DIR, f))
+    pose_log = [] # Clear previous log
     
     return jsonify({'status': 'success', 'message': f'Session started for {current_user_display_name}'})
 
@@ -423,27 +234,33 @@ def start_session():
 @app.route('/end_session', methods=['POST'])
 @jwt_required 
 def end_session():
-    """End session, calculate points (capped at 99), generate report, and store in Firestore (protected route)"""
+    """End session, calculate points, generate report, and store in Firestore (protected route)"""
     global session_active, current_user_uid, current_user_display_name
     
     if not session_active or not current_user_uid:
         return jsonify({'status': 'error', 'message': 'No active session or user logged in.'}), 400
     
     session_active = False
-    time.sleep(2)
+    time.sleep(1) 
     session_end_time = datetime.now()
     
     points_awarded = 0
     limit_message = None
     duration_seconds = 0
     avg_conf = 0
-    df = pd.DataFrame(pose_log)
     
     if pose_log:
-        avg_conf = df['confidence'].mean()
-        duration_seconds = pose_log[-1]['timestamp'] - pose_log[0]['timestamp'] if len(pose_log) > 1 else 0
+        df = pd.DataFrame(pose_log)
         
-        duration_min = duration_seconds / 60
+        if len(pose_log) > 1:
+            duration_seconds = pose_log[-1]['timestamp'] - pose_log[0]['timestamp']
+            duration_min = duration_seconds / 60
+        else:
+            duration_min = 0.0
+        
+        avg_conf = df['confidence'].mean()
+        
+        duration_min = max(0, duration_min) 
         base_factor = 10 
         points_awarded = int(avg_conf * duration_min * base_factor)
         
@@ -494,11 +311,8 @@ def download_report():
 def session_status():
     """Get current session status"""
     return jsonify({
-        'camera_active': camera_active,
-        'session_active': session_active,
+        'session_active': session_active, # camera_active removed
         'poses_logged': len(pose_log),
         'current_user_uid': current_user_uid,
         'current_user_display_name': current_user_display_name
     })
-
-# --- NOTE: Removed if __name__ == '__main__': block for serverless compatibility ---
