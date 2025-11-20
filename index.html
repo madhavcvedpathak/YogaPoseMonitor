@@ -9,8 +9,13 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
     
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    
     <style>
-        /* === ENHANCED CSS STYLES FOR MODERN LOOK (FROM PREVIOUS STEP) === */
+        /* === ENHANCED CSS STYLES FOR MODERN LOOK (KEPT AS ORIGINAL) === */
         
         :root {
             --color-primary: #a777e3; 
@@ -172,30 +177,71 @@
             align-items: flex-start;
         }
 
-        /* LEFT CAMERA SECTION */
+        /* LEFT CAMERA SECTION (UPDATED FOR CANVAS/VIDEO) */
+        .video-section {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: calc(100vh - 250px);
+            min-height: 500px;
+        }
+        
         .video-container {
             background: #1c1c1c; 
             border-radius: 15px;
             overflow: hidden;
             position: relative;
             box-shadow: var(--shadow-lg);
-            height: calc(100vh - 250px); 
-            min-height: 500px;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
-
-        #video-feed {
+        
+        /* NEW: Use canvas for drawing and video for input */
+        #video-input {
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
             height: 100%;
             object-fit: cover;
-            display: block;
+            display: none; /* Hidden video element used as source */
+        }
+        
+        #video-output {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block; /* The visible canvas where landmarks are drawn */
         }
 
         .video-overlay {
             color: white;
             text-shadow: 0 0 5px rgba(0,0,0,0.8);
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 10;
+        }
+        
+        #pose-display {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: limegreen;
+            font-weight: bold;
+            font-size: 1.2em;
+            text-shadow: 0 0 5px rgba(0,0,0,0.8);
+            z-index: 10;
         }
 
-        /* RIGHT ARTICLE PANEL */
+
+        /* RIGHT ARTICLE PANEL (KEPT AS ORIGINAL) */
         .articles-panel {
             background: #fdfdfd;
             padding: 25px;
@@ -232,7 +278,7 @@
             box-shadow: 0 8px 15px rgba(167, 119, 227, 0.2); 
         }
         
-        /* NEW: Style for images in the pose list cards */
+        /* Style for images in the pose list cards */
         .article-img {
             width: 100px; /* Small fixed width for list thumbnail */
             height: 100px;
@@ -260,7 +306,7 @@
             color: var(--color-primary);
         }
         
-        /* NEW: Style for image in the detail view */
+        /* Style for image in the detail view */
         #detail-img {
             width: 100%;
             max-height: 250px;
@@ -304,8 +350,7 @@
             <input type="text" id="user-name" value="Yogi" placeholder="Enter your name" readonly>
             <button class="btn" style="background:#03A9F4;" id="btn-login" onclick="handleLogin()">Log In (Get JWT)</button>
 
-            <button class="btn btn-camera" id="btn-start-camera" onclick="startCamera()" disabled>Start Camera</button>
-            <button class="btn btn-camera" id="btn-stop-camera" onclick="stopCamera()" disabled>Stop Camera</button>
+            <button class="btn btn-camera" id="btn-toggle-camera" onclick="toggleCamera()" disabled>Start Camera</button>
 
             <button class="btn btn-start" id="btn-start-session" onclick="startSession()" disabled>Start Session</button>
             <button class="btn btn-stop" id="btn-end-session" onclick="endSession()" disabled>End Session</button>
@@ -327,11 +372,15 @@
 
         <div class="video-section">
             <div class="video-container">
-                <img id="video-feed" src="" alt="Video Feed">
+                <video id="video-input" playsinline></video>
+                <canvas id="video-output"></canvas>
+                
                 <div class="video-overlay" id="video-overlay">
                     <p>🔒 Please Log In first</p>
                     <p style="font-size: 0.7em; margin-top: 10px; font-weight: 400;">(Required for session tracking)</p>
                 </div>
+                
+                <div id="pose-display"></div>
             </div>
         </div>
 
@@ -366,11 +415,10 @@
 </div>
 
 <script>
-/* === JAVASCRIPT CODE FOR FIREBASE AUTH AND MULTILINGUAL YOGA LIBRARY === */
+/* === JAVASCRIPT CODE FOR FIREBASE AUTH AND MULTILINGUAL YOGA LIBRARY (UPDATED) === */
 
-// --- FIREBASE CLIENT CONFIGURATION ---
+// --- GLOBAL STATE ---
 const firebaseConfig = {
-    // ⚠️ These are your actual keys 
     apiKey: "AIzaSyDcyNly1fUDp5u9-cxayzUbOAN1LFHOT2M", 
     authDomain: "ayursutra-8eea4.firebaseapp.com",
     databaseURL: "https://ayursutra-8eea4-default-rtdb.firebaseio.com",
@@ -380,16 +428,487 @@ const firebaseConfig = {
     appId: "1:350738808548:web:f5e24afbba024be5ba76f1"
 };
 
-// Initialize Firebase
 firebase.initializeApp(firebaseConfig);
 
 let globalIdToken = null;
 let currentFirebaseUser = null;
-let statusInterval = null;
+let sessionActive = false;
+let currentPose = "---";
+let poseConfidence = 0.00;
+let logBuffer = []; // Buffer for poses before sending to backend
+let logInterval = null;
+let cameraInstance = null; // Holds the MediaPipe Camera instance
+let pose = null; // Holds the MediaPipe Pose instance
+const LOG_SEND_FREQUENCY_MS = 2000; // Send log data every 2 seconds
+const POSE_LOG_RATE = 5; // Log every 5 frames for analysis (~10 times per second)
+let frameCounter = 0;
 
 
-// --- 1. MULTILINGUAL YOGA POSE DATA (English, Marathi, & Hindi) ---
-// NOTE: I am using placeholder Unsplash links for demonstration purposes.
+// --- DOM ELEMENTS ---
+const videoElement = document.getElementById('video-input');
+const canvasElement = document.getElementById('video-output');
+const canvasCtx = canvasElement.getContext('2d');
+const poseDisplay = document.getElementById('pose-display');
+const btnToggleCamera = document.getElementById('btn-toggle-camera');
+const btnStartSession = document.getElementById('btn-start-session');
+const btnEndSession = document.getElementById('btn-end-session');
+const videoOverlay = document.getElementById('video-overlay');
+
+// --- UTILITY FUNCTIONS ---
+
+function getAuthHeaders(contentType = 'application/json') {
+    if (!globalIdToken) {
+        showAlert("Error: Please log in first!", "error");
+        document.getElementById('btn-login').disabled = false;
+        throw new Error("User not authenticated.");
+    }
+    return {
+        'Content-Type': contentType,
+        'Authorization': `Bearer ${globalIdToken}`
+    };
+}
+
+function showAlert(message, type='info'){
+    const alertContainer = document.getElementById('alert-container');
+    alertContainer.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+    setTimeout(()=> alertContainer.innerHTML='', 4000);
+}
+
+// --- MEDIAPIPE UTILITIES (COPIED FROM PYTHON LOGIC) ---
+
+function calculateAngle(a, b, c) {
+    const p1 = [a.x, a.y];
+    const p2 = [b.x, b.y];
+    const p3 = [c.x, c.y];
+    
+    const radians = Math.atan2(p3[1] - p2[1], p3[0] - p2[0]) - Math.atan2(p1[1] - p2[1], p1[0] - p2[0]);
+    let angle = Math.abs(radians * 180.0 / Math.PI);
+    
+    if (angle > 180.0) {
+        angle = 360 - angle;
+    }
+    return angle;
+}
+
+function classifyPose(landmarks) {
+    // Only process normalized landmarks
+    const getPoint = (p) => landmarks[p].keypoint; 
+    
+    const LeftShoulder = getPoint(mp_pose.PoseLandmark.LEFT_SHOULDER);
+    const LeftElbow = getPoint(mp_pose.PoseLandmark.LEFT_ELBOW);
+    const LeftWrist = getPoint(mp_pose.PoseLandmark.LEFT_WRIST);
+    const LeftHip = getPoint(mp_pose.PoseLandmark.LEFT_HIP);
+    const LeftKnee = getPoint(mp_pose.PoseLandmark.LEFT_KNEE);
+    const LeftAnkle = getPoint(mp_pose.PoseLandmark.LEFT_ANKLE);
+    
+    const RightShoulder = getPoint(mp_pose.PoseLandmark.RIGHT_SHOULDER);
+    const RightElbow = getPoint(mp_pose.PoseLandmark.RIGHT_ELBOW);
+    const RightWrist = getPoint(mp_pose.PoseLandmark.RIGHT_WRIST);
+    const RightHip = getPoint(mp_pose.PoseLandmark.RIGHT_HIP);
+    const RightKnee = getPoint(mp_pose.PoseLandmark.RIGHT_KNEE);
+    const RightAnkle = getPoint(mp_pose.PoseLandmark.RIGHT_ANKLE);
+    
+    // Calculate angles
+    const leftElbowAngle = calculateAngle(LeftShoulder, LeftElbow, LeftWrist);
+    const rightElbowAngle = calculateAngle(RightShoulder, RightElbow, RightWrist);
+    const leftKneeAngle = calculateAngle(LeftHip, LeftKnee, LeftAnkle);
+    const rightKneeAngle = calculateAngle(RightHip, RightKnee, RightAnkle);
+    const leftHipAngle = calculateAngle(LeftShoulder, LeftHip, LeftKnee); // Angle between torso and thigh
+    const rightHipAngle = calculateAngle(RightShoulder, RightHip, RightKnee);
+    const leftShldrAngle = calculateAngle(LeftElbow, LeftShoulder, LeftHip);
+    const rightShldrAngle = calculateAngle(RightElbow, RightShoulder, RightHip);
+    
+    let poseName = "Unknown";
+    let confidence = 0.50;
+    
+    // Simplified Classification Logic (Matching Python Backend Logic)
+    const armsStraight = (leftElbowAngle > 160 && rightElbowAngle > 160);
+    const legsStraight = (leftKneeAngle > 160 && rightKneeAngle > 160);
+
+    // Pranamasana
+    if (legsStraight && leftHipAngle > 160 && rightHipAngle > 160 && leftShldrAngle > 160 && rightShldrAngle > 160) {
+        poseName = "Pranamasana"; 
+        confidence = 0.95;
+    }
+    // Hasta Uttanasana
+    else if (legsStraight && leftHipAngle > 160 && rightHipAngle > 160 && leftShldrAngle < 40 && rightShldrAngle < 40 && armsStraight) {
+        poseName = "Hasta Uttanasana";
+        confidence = 0.90;
+    }
+    // Uttanasana
+    else if (legsStraight && leftHipAngle < 90 && rightHipAngle < 90) {
+        poseName = "Uttanasana";
+        confidence = 0.85;
+    }
+    // Ashwa Sanchalanasana (Left leg back)
+    else if (leftKneeAngle < 100 && rightKneeAngle > 160 && leftHipAngle < 100 && rightHipAngle > 140) {
+        poseName = "Ashwa Sanchalanasana (L)";
+        confidence = 0.88;
+    }
+    // Ashwa Sanchalanasana (Right leg back)
+    else if (rightKneeAngle < 100 && leftKneeAngle > 160 && rightHipAngle < 100 && leftHipAngle > 140) {
+        poseName = "Ashwa Sanchalanasana (R)";
+        confidence = 0.88;
+    }
+    // Dandasana (Plank)
+    else if (legsStraight && Math.abs(leftHipAngle - 180) < 20 && Math.abs(rightHipAngle - 180) < 20 && armsStraight && Math.abs(leftShldrAngle - 180) < 20 && Math.abs(rightShldrAngle - 180) < 20) {
+        poseName = "Dandasana"; 
+        confidence = 0.80;
+    }
+    // Ashtanga Namaskara
+    else if (leftHipAngle > 100 && rightHipAngle > 100 && leftKneeAngle < 100 && rightKneeAngle < 100) {
+        poseName = "Ashtanga Namaskara";
+        confidence = 0.70;
+    }
+    // Bhujangasana (Cobra Pose)
+    else if (leftHipAngle > 160 && rightHipAngle > 160 && leftKneeAngle > 160 && rightKneeAngle > 160 && Math.abs(leftShldrAngle - 180) < 20 && Math.abs(rightShldrAngle - 180) < 20 && leftElbowAngle < 160 && rightElbowAngle < 160) {
+        poseName = "Bhujangasana";
+        confidence = 0.80;
+    }
+    // Adho Mukha Svanasana (Downward Dog)
+    else if (leftHipAngle < 110 && rightHipAngle < 110 && legsStraight && armsStraight) {
+        poseName = "Adho Mukha Svanasana";
+        confidence = 0.92;
+    }
+
+    return {
+        pose: poseName,
+        confidence: confidence.toFixed(2),
+        // Simplification: only sending pose and confidence to backend to reduce payload size
+    };
+}
+
+
+// --- MEDIAPIPE POSE SETUP ---
+
+function onResults(results) {
+    if (!results.poseLandmarks) {
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        currentPose = "No Pose Detected";
+        poseConfidence = 0.00;
+        poseDisplay.innerText = `Pose: ${currentPose}\nConfidence: ${poseConfidence.toFixed(2)}`;
+        return;
+    }
+
+    // Set canvas dimensions to match video feed
+    canvasElement.width = videoElement.videoWidth;
+    canvasElement.height = videoElement.videoHeight;
+
+    canvasCtx.save();
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    // Draw the image from the video stream onto the canvas
+    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+    // Draw landmarks
+    drawConnectors(canvasCtx, results.poseLandmarks, mp_pose.POSE_CONNECTIONS,
+                   {color: '#00FF00', lineWidth: 2});
+    drawLandmarks(canvasCtx, results.poseLandmarks,
+                  {color: '#FF0000', lineWidth: 2, radius: 2});
+    
+    canvasCtx.restore();
+    
+    // Pose Classification and Logging
+    const classifiedData = classifyPose(results.poseLandmarks);
+    currentPose = classifiedData.pose;
+    poseConfidence = parseFloat(classifiedData.confidence);
+    
+    // Update live display
+    poseDisplay.innerText = `Pose: ${currentPose}\nConfidence: ${poseConfidence.toFixed(2)}`;
+
+    // Logging to buffer
+    frameCounter++;
+    if (sessionActive && frameCounter % POSE_LOG_RATE === 0) {
+        logBuffer.push({
+            pose: currentPose,
+            confidence: poseConfidence,
+            timestamp: Date.now() / 1000 // UNIX timestamp in seconds
+        });
+    }
+}
+
+function setupPoseDetector() {
+    pose = new Pose({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+    }});
+    
+    pose.setOptions({
+        modelComplexity: 1, 
+        smoothLandmarks: true,
+        enableSegmentation: false,
+        smoothSegmentation: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    pose.onResults(onResults);
+}
+
+// --- CORE APPLICATION FUNCTIONS (UPDATED FOR JS CAMERA CONTROL) ---
+
+// Renamed and streamlined to use toggleCamera() in the HTML
+function toggleCamera() {
+    if (cameraInstance && cameraInstance.p) { 
+        stopCamera();
+    } else {
+        startCamera();
+    }
+}
+
+async function startCamera() {
+    if (!pose) {
+        setupPoseDetector();
+    }
+    
+    // Start MediaPipe Camera utility
+    cameraInstance = new Camera(videoElement, {
+        onFrame: async () => {
+            await pose.send({image: videoElement});
+        },
+        width: 1280, 
+        height: 720
+    });
+    
+    try {
+        await cameraInstance.start();
+        
+        videoElement.style.display = 'block';
+        videoOverlay.style.display = 'none';
+        btnToggleCamera.innerText = "Stop Camera";
+        btnStartSession.disabled = false;
+        
+        showAlert("Camera Started. Ready for tracking.", "success");
+        
+    } catch (e) {
+        console.error("Camera failed to start:", e);
+        showAlert("❌ Camera access denied or failed. Check permissions.", "error");
+    }
+}
+
+function stopCamera() {
+    if (cameraInstance && cameraInstance.stop) {
+        cameraInstance.stop();
+        cameraInstance = null;
+    }
+    
+    videoElement.style.display = 'none';
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    videoOverlay.style.display = 'block';
+    
+    btnToggleCamera.innerText = "Start Camera";
+    btnStartSession.disabled = true;
+    btnEndSession.disabled = true;
+    
+    sessionActive = false;
+    stopLogInterval();
+    
+    showAlert("Camera Stopped.", "info");
+}
+
+async function sendLogData() {
+    if (logBuffer.length === 0 || !sessionActive) return;
+
+    // Grab the current buffer and clear it immediately
+    const dataToSend = logBuffer.slice();
+    logBuffer = [];
+
+    try {
+        const userName = document.getElementById("user-name").value;
+        // Calls the new /log_pose Flask route
+        const res = await fetch('/log_pose', { 
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ pose_data: dataToSend, user_name: userName })
+        });
+        
+        const data = await res.json();
+        if (data.status !== 'success') {
+            console.warn("Backend log failed:", data.message);
+        }
+    } catch (e) {
+        console.error("Error sending log data to backend:", e);
+        logBuffer.unshift(...dataToSend);
+    }
+}
+
+function startLogInterval() {
+    if (!logInterval) {
+        logInterval = setInterval(sendLogData, LOG_SEND_FREQUENCY_MS);
+    }
+}
+
+function stopLogInterval() {
+    if (logInterval) {
+        clearInterval(logInterval);
+        logInterval = null;
+    }
+    // Send any remaining data in the buffer immediately
+    if (logBuffer.length > 0) {
+        sendLogData();
+    }
+}
+
+async function startSession(){
+    try {
+        if (!cameraInstance) {
+            showAlert("Error: Please start the camera first!", "error");
+            return;
+        }
+        
+        const userName = document.getElementById("user-name").value;
+        const res = await fetch('/start_session',{
+            method:"POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({user_name: userName})
+        });
+        const data = await res.json();
+        
+        if (res.status === 401) { 
+            showAlert(data.message || "Authentication failed. Please log in again.", "error");
+            return;
+        }
+
+        if(data.status === 'success'){
+            sessionActive = true;
+            logBuffer = []; // Clear log buffer one final time
+            startLogInterval();
+            btnStartSession.disabled=true;
+            btnEndSession.disabled=false;
+            showAlert("Session Started. Begin your practice!", "success");
+        } else {
+            showAlert(data.message, "error");
+        }
+    } catch (e) {
+        console.error(e);
+        showAlert(e.message || "An unexpected error occurred starting the session.", "error");
+    }
+}
+
+async function endSession(){
+    try {
+        if (!sessionActive) {
+            showAlert("Error: No active session to end.", "error");
+            return;
+        }
+        
+        sessionActive = false; 
+        stopLogInterval();
+        
+        // Send any final buffered logs before calling /end_session
+        if (logBuffer.length > 0) {
+             await sendLogData();
+        }
+        
+        const userName = document.getElementById("user-name").value;
+        const res = await fetch('/end_session',{
+            method:"POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({user_name: userName})
+        });
+        const data = await res.json();
+
+        if (res.status === 401) {
+            showAlert(data.message || "Authentication failed. Please log in again.", "error");
+            return;
+        }
+        
+        if(data.status === "success"){
+            document.getElementById('btn-download').disabled=false;
+            document.getElementById('btn-end-session').disabled=true;
+            document.getElementById('btn-start-session').disabled=false;
+            
+            let message = `Session Ended. You earned **${data.points_awarded}** points. Report Ready!`;
+            if (data.limit_message) {
+                 message += ` (${data.limit_message})`;
+            }
+            if (data.storage_status === 'failure') {
+                 message += " ⚠️ Data storage failed.";
+            }
+
+            showAlert(message, "success");
+        } else {
+            showAlert(data.message, "error");
+        }
+    } catch (e) {
+        console.error(e);
+        showAlert(e.message || "An unexpected error occurred ending the session.", "error");
+    }
+}
+
+function downloadReport(){
+    window.location.href = "/download_report";
+}
+
+async function updateStatus(){
+    // The backend /session_status now reports 'session_active' (not camera_active)
+    const res = await fetch('/session_status');
+    const data = await res.json();
+    document.getElementById('header-subtitle').innerText = `Logged in as: ${data.current_user_display_name || 'Guest'}`;
+}
+
+function startStatusUpdates(){
+    if(!statusInterval){
+        statusInterval = setInterval(updateStatus, 1000);
+    }
+}
+
+function stopStatusUpdates(){
+    if(statusInterval){
+        clearInterval(statusInterval);
+        statusInterval = null;
+    }
+}
+
+
+// --- 5. HELPER FUNCTION TO SWITCH LANGUAGE (KEPT AS ORIGINAL) ---
+let currentLanguage = 'en';
+
+function switchLanguage(lang) {
+    if (['en', 'mr', 'hi'].includes(lang)) {
+        currentLanguage = lang;
+        
+        // Update static UI elements
+        const texts = {
+            'header-title': { en: '🧘 Yoga Pose Monitor', mr: '🧘 योग मुद्रा मॉनिटर', hi: '🧘 योग मुद्रा मॉनिटर' },
+            'header-subtitle': { en: 'AI-powered real-time pose tracking with instant report generation', mr: 'एआय-शक्तीवर आधारित वास्तविक-वेळ मुद्रा ट्रॅकिंग', hi: 'एआई-संचालित वास्तविक समय आसन ट्रैकिंग' },
+            'btn-toggle-camera': { en: cameraInstance ? 'Stop Camera' : 'Start Camera', mr: cameraInstance ? 'कॅमेरा थांबवा' : 'कॅमेरा सुरु करा', hi: cameraInstance ? 'कैमरा रोकें' : 'कैमरा शुरू करें' },
+            'btn-start-session': { en: 'Start Session', mr: 'सत्र सुरु करा', hi: 'सत्र शुरू करें' },
+            'btn-end-session': { en: 'End Session', mr: 'सत्र समाप्त करा', hi: 'सत्र समाप्त करें' },
+            'btn-download': { en: 'Download Report', mr: 'अहवाल डाउनलोड करा', hi: 'रिपोर्ट डाउनलोड करें' },
+            'btn-back': { en: '← Back to All Poses', mr: '← सर्व आसनांकडे परत जा', hi: '← सभी आसनों पर वापस जाएँ' },
+            'detail-heading-desc': { en: 'Description & Benefits', mr: 'वर्णन आणि फायदे', hi: 'विवरण और लाभ' },
+            'detail-heading-steps': { en: 'Step-by-Step Instructions', mr: 'टप्प्याटप्प्याने सूचना', hi: 'चरण-दर-चरण निर्देश' }
+        };
+
+        for (const id in texts) {
+            const element = document.getElementById(id);
+            if (element) {
+                element.innerText = texts[id][lang];
+            }
+        }
+        
+        // Regenerate the list to update pose titles/descriptions
+        showYogaList(); 
+        showAlert(`Language set to ${lang === 'mr' ? 'Marathi' : lang === 'hi' ? 'Hindi' : 'English'}`, 'info');
+    }
+}
+
+// --- 6. NAVIGATION DATA AND FUNCTIONS (KEPT AS ORIGINAL) ---
+
+const SURYA_NAMASKAR_SEQUENCE = [
+    { step: 1, key: 'Pranamasana' },
+    { step: 2, key: 'Hasta Uttanasana' },
+    { step: 3, key: 'Uttanasana' },
+    { step: 4, key: 'Ashwa Sanchalanasana' }, // Left Leg Back (Instructions mention Right Leg)
+    { step: 5, key: 'Dandasana' },
+    { step: 6, key: 'Ashtanga Namaskara' },
+    { step: 7, key: 'Bhujangasana' },
+    { step: 8, key: 'Adho Mukha Svanasana' },
+    { step: 9, key: 'Ashwa Sanchalanasana' }, // Right Leg Back (Opposite of Step 4)
+    { step: 10, key: 'Uttanasana' },
+    { step: 11, key: 'Hasta Uttanasana' },
+    { step: 12, key: 'Pranamasana' }
+];
+
 const YOGA_POSES = {
     'Pranamasana': {
         title: { 
@@ -659,7 +1178,6 @@ const YOGA_POSES = {
     },
 };
 
-// --- 2. SEQUENCE AND LANGUAGE SETUP ---
 const SURYA_NAMASKAR_SEQUENCE = [
     { step: 1, key: 'Pranamasana' },
     { step: 2, key: 'Hasta Uttanasana' },
@@ -675,38 +1193,39 @@ const SURYA_NAMASKAR_SEQUENCE = [
     { step: 12, key: 'Pranamasana' }
 ];
 
-// Global state for current language, defaulting to English
-let currentLanguage = 'en';
 
-// --- 3. AUTHENTICATION FUNCTIONS ---
-async function handleLogin() {
-    try {
-        document.getElementById('btn-login').disabled = true;
-        document.getElementById('btn-login').innerText = "Logging In...";
-        
-        const userCredential = await firebase.auth().signInAnonymously();
-        currentFirebaseUser = userCredential.user;
-        globalIdToken = await currentFirebaseUser.getIdToken();
-        
-        document.getElementById('user-name').value = `User-${currentFirebaseUser.uid.substring(0, 4)}`;
-        document.getElementById('user-name').removeAttribute('readonly');
-        document.getElementById('btn-login').innerText = "Logged In";
-        
-        document.getElementById('video-overlay').innerHTML = `<p>📹 Click "Start Camera" to begin</p><p style="font-size: 0.7em; margin-top: 10px; font-weight: 400;">(Ensure good lighting and full body view)</p>`;
+// --- JAVASCRIPT CODE STARTS HERE ---
 
-        document.getElementById('btn-start-camera').disabled = false;
-        
-        showAlert(`✅ Logged in as User ID: ${currentFirebaseUser.uid.substring(0, 8)}...`, "success");
+let globalIdToken = null;
+let currentFirebaseUser = null;
+let statusInterval = null;
 
-    } catch (error) {
-        console.error("Firebase Auth Error:", error);
-        showAlert(`❌ Login failed: ${error.message}`, "error");
-        document.getElementById('btn-login').disabled = false;
-        document.getElementById('btn-login').innerText = "Log In (Get JWT)";
-    }
-}
+let sessionActive = false;
+let currentPose = "---";
+let poseConfidence = 0.00;
+let logBuffer = []; 
+let logInterval = null;
+let cameraInstance = null; 
+let pose = null; 
+const LOG_SEND_FREQUENCY_MS = 2000; 
+const POSE_LOG_RATE = 5; 
+let frameCounter = 0;
 
-// Helper to create headers with the token
+
+// --- DOM ELEMENTS (NEW REFERENCES) ---
+// Note: video-feed is replaced by video-input and video-output
+const videoInput = document.getElementById('video-input');
+const canvasElement = document.getElementById('video-output');
+const canvasCtx = canvasElement.getContext('2d');
+const poseDisplay = document.getElementById('pose-display');
+const btnToggleCamera = document.getElementById('btn-toggle-camera');
+const btnStartSession = document.getElementById('btn-start-session');
+const btnEndSession = document.getElementById('btn-end-session');
+const videoOverlay = document.getElementById('video-overlay');
+
+
+// --- UTILITY FUNCTIONS ---
+
 function getAuthHeaders(contentType = 'application/json') {
     if (!globalIdToken) {
         showAlert("Error: Please log in first!", "error");
@@ -719,46 +1238,290 @@ function getAuthHeaders(contentType = 'application/json') {
     };
 }
 
-
-// --- 4. CORE APPLICATION FUNCTIONS ---
-
 function showAlert(message, type='info'){
     const alertContainer = document.getElementById('alert-container');
     alertContainer.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
     setTimeout(()=> alertContainer.innerHTML='', 4000);
 }
 
-async function startCamera() {
-    const res = await fetch('/start_camera', { method: 'POST' });
-    const data = await res.json();
-    if(data.status==='success'){
-        document.getElementById('video-feed').src = '/video_feed';
-        document.getElementById('video-overlay').style.display='none';
-        document.getElementById('btn-start-camera').disabled = true;
-        document.getElementById('btn-stop-camera').disabled = false;
-        document.getElementById('btn-start-session').disabled = false;
-        startStatusUpdates();
-        showAlert("Camera Started", "success");
+// --- MEDIAPIPE UTILITIES (COPIED FROM PYTHON LOGIC) ---
+
+function calculateAngle(a, b, c) {
+    const p1 = [a.x, a.y];
+    const p2 = [b.x, b.y];
+    const p3 = [c.x, c.y];
+    
+    const radians = Math.atan2(p3[1] - p2[1], p3[0] - p2[0]) - Math.atan2(p1[1] - p2[1], p1[0] - p2[0]);
+    let angle = Math.abs(radians * 180.0 / Math.PI);
+    
+    if (angle > 180.0) {
+        angle = 360 - angle;
+    }
+    return angle;
+}
+
+function classifyPose(landmarks) {
+    // MediaPipe landmarks are returned as an array of objects
+    const getPoint = (p) => landmarks[p]; 
+    
+    const LeftShoulder = getPoint(mp_pose.PoseLandmark.LEFT_SHOULDER);
+    const LeftElbow = getPoint(mp_pose.PoseLandmark.LEFT_ELBOW);
+    const LeftWrist = getPoint(mp_pose.PoseLandmark.LEFT_WRIST);
+    const LeftHip = getPoint(mp_pose.PoseLandmark.LEFT_HIP);
+    const LeftKnee = getPoint(mp_pose.PoseLandmark.LEFT_KNEE);
+    const LeftAnkle = getPoint(mp_pose.PoseLandmark.LEFT_ANKLE);
+    
+    const RightShoulder = getPoint(mp_pose.PoseLandmark.RIGHT_SHOULDER);
+    const RightElbow = getPoint(mp_pose.PoseLandmark.RIGHT_ELBOW);
+    const RightWrist = getPoint(mp_pose.PoseLandmark.RIGHT_WRIST);
+    const RightHip = getPoint(mp_pose.PoseLandmark.RIGHT_HIP);
+    const RightKnee = getPoint(mp_pose.PoseLandmark.RIGHT_KNEE);
+    const RightAnkle = getPoint(mp_pose.PoseLandmark.RIGHT_ANKLE);
+    
+    // Calculate angles
+    const leftElbowAngle = calculateAngle(LeftShoulder, LeftElbow, LeftWrist);
+    const rightElbowAngle = calculateAngle(RightShoulder, RightElbow, RightWrist);
+    const leftKneeAngle = calculateAngle(LeftHip, LeftKnee, LeftAnkle);
+    const rightKneeAngle = calculateAngle(RightHip, RightKnee, RightAnkle);
+    const leftHipAngle = calculateAngle(LeftShoulder, LeftHip, LeftKnee); 
+    const rightHipAngle = calculateAngle(RightShoulder, RightHip, RightKnee);
+    const leftShldrAngle = calculateAngle(LeftElbow, LeftShoulder, LeftHip);
+    const rightShldrAngle = calculateAngle(RightElbow, RightShoulder, RightHip);
+    
+    let poseName = "Unknown";
+    let confidence = 0.50;
+    
+    // Simplified Classification Logic (Matching Python Backend Logic)
+    const armsStraight = (leftElbowAngle > 160 && rightElbowAngle > 160);
+    const legsStraight = (leftKneeAngle > 160 && rightKneeAngle > 160);
+
+    // Pranamasana
+    if (legsStraight && leftHipAngle > 160 && rightHipAngle > 160 && leftShldrAngle > 160 && rightShldrAngle > 160) {
+        poseName = "Pranamasana"; 
+        confidence = 0.95;
+    }
+    // Hasta Uttanasana
+    else if (legsStraight && leftHipAngle > 160 && rightHipAngle > 160 && leftShldrAngle < 40 && rightShldrAngle < 40 && armsStraight) {
+        poseName = "Hasta Uttanasana";
+        confidence = 0.90;
+    }
+    // Uttanasana
+    else if (legsStraight && leftHipAngle < 90 && rightHipAngle < 90) {
+        poseName = "Uttanasana";
+        confidence = 0.85;
+    }
+    // Ashwa Sanchalanasana (L) - Added L/R for logging clarity
+    else if (leftKneeAngle < 100 && rightKneeAngle > 160 && leftHipAngle < 100 && rightHipAngle > 140) {
+        poseName = "Ashwa Sanchalanasana (L)";
+        confidence = 0.88;
+    }
+    // Ashwa Sanchalanasana (R)
+    else if (rightKneeAngle < 100 && leftKneeAngle > 160 && rightHipAngle < 100 && leftHipAngle > 140) {
+        poseName = "Ashwa Sanchalanasana (R)";
+        confidence = 0.88;
+    }
+    // Dandasana (Plank)
+    else if (legsStraight && Math.abs(leftHipAngle - 180) < 20 && Math.abs(rightHipAngle - 180) < 20 && armsStraight && Math.abs(leftShldrAngle - 180) < 20 && Math.abs(rightShldrAngle - 180) < 20) {
+        poseName = "Dandasana"; 
+        confidence = 0.80;
+    }
+    // Ashtanga Namaskara
+    else if (leftHipAngle > 100 && rightHipAngle > 100 && leftKneeAngle < 100 && rightKneeAngle < 100) {
+        poseName = "Ashtanga Namaskara";
+        confidence = 0.70;
+    }
+    // Bhujangasana (Cobra Pose)
+    else if (leftHipAngle > 160 && rightHipAngle > 160 && leftKneeAngle > 160 && rightKneeAngle > 160 && Math.abs(leftShldrAngle - 180) < 20 && Math.abs(rightShldrAngle - 180) < 20 && leftElbowAngle < 160 && rightElbowAngle < 160) {
+        poseName = "Bhujangasana";
+        confidence = 0.80;
+    }
+    // Adho Mukha Svanasana (Downward Dog)
+    else if (leftHipAngle < 110 && rightHipAngle < 110 && legsStraight && armsStraight) {
+        poseName = "Adho Mukha Svanasana";
+        confidence = 0.92;
+    }
+
+    return {
+        pose: poseName,
+        confidence: confidence.toFixed(2),
+        // We only send pose and confidence to the backend for logging
+    };
+}
+
+
+// --- MEDIAPIPE POSE SETUP ---
+
+function onResults(results) {
+    if (!results.poseLandmarks) {
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        currentPose = "No Pose Detected";
+        poseConfidence = 0.00;
+        poseDisplay.innerText = `Pose: ${currentPose}\nConfidence: ${poseConfidence.toFixed(2)}`;
+        return;
+    }
+
+    // Set canvas dimensions to match video feed
+    canvasElement.width = videoInput.videoWidth;
+    canvasElement.height = videoInput.videoHeight;
+
+    canvasCtx.save();
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    // Draw the image from the video stream onto the canvas
+    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+    // Draw landmarks
+    drawConnectors(canvasCtx, results.poseLandmarks, mp_pose.POSE_CONNECTIONS,
+                   {color: '#00FF00', lineWidth: 2});
+    drawLandmarks(canvasCtx, results.poseLandmarks,
+                  {color: '#FF0000', lineWidth: 2, radius: 2});
+    
+    canvasCtx.restore();
+    
+    // Pose Classification and Logging
+    const classifiedData = classifyPose(results.poseLandmarks);
+    currentPose = classifiedData.pose;
+    poseConfidence = parseFloat(classifiedData.confidence);
+    
+    // Update live display
+    poseDisplay.innerText = `Pose: ${currentPose}\nConfidence: ${poseConfidence.toFixed(2)}`;
+
+    // Logging to buffer
+    frameCounter++;
+    if (sessionActive && frameCounter % POSE_LOG_RATE === 0) {
+        logBuffer.push({
+            pose: currentPose,
+            confidence: poseConfidence,
+            timestamp: Date.now() / 1000 // UNIX timestamp in seconds
+        });
     }
 }
 
-async function stopCamera() {
-    const res = await fetch('/stop_camera',{method:"POST"});
-    const data = await res.json();
-    if(data.status==='success'){
-        document.getElementById('video-feed').src="";
-        document.getElementById('video-overlay').style.display='block';
-        document.getElementById('btn-start-camera').disabled=false;
-        document.getElementById('btn-stop-camera').disabled=true;
-        document.getElementById('btn-start-session').disabled=true;
-        document.getElementById('btn-end-session').disabled=true;
-        stopStatusUpdates();
-        showAlert("Camera Stopped", "info");
+function setupPoseDetector() {
+    pose = new Pose({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+    }});
+    
+    pose.setOptions({
+        modelComplexity: 1, 
+        smoothLandmarks: true,
+        enableSegmentation: false,
+        smoothSegmentation: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    pose.onResults(onResults);
+}
+
+// --- CORE APPLICATION FUNCTIONS (UPDATED FOR JS CAMERA CONTROL) ---
+
+function toggleCamera() {
+    if (cameraInstance && cameraInstance.p) { 
+        stopCamera();
+    } else {
+        startCamera();
+    }
+}
+
+async function startCamera() {
+    if (!pose) {
+        setupPoseDetector();
+    }
+    
+    // Start MediaPipe Camera utility
+    cameraInstance = new Camera(videoInput, {
+        onFrame: async () => {
+            await pose.send({image: videoInput});
+        },
+        width: 1280, 
+        height: 720
+    });
+    
+    try {
+        await cameraInstance.start();
+        
+        videoInput.style.display = 'block';
+        videoOverlay.style.display = 'none';
+        btnToggleCamera.innerText = "Stop Camera";
+        btnStartSession.disabled = false;
+        
+        showAlert("Camera Started. Ready for tracking.", "success");
+        
+    } catch (e) {
+        console.error("Camera failed to start:", e);
+        showAlert("❌ Camera access denied or failed. Check permissions.", "error");
+    }
+}
+
+function stopCamera() {
+    if (cameraInstance && cameraInstance.stop) {
+        cameraInstance.stop();
+        cameraInstance = null;
+    }
+    
+    videoInput.style.display = 'none';
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    videoOverlay.style.display = 'block';
+    
+    btnToggleCamera.innerText = "Start Camera";
+    btnStartSession.disabled = true;
+    btnEndSession.disabled = true;
+    
+    sessionActive = false;
+    stopLogInterval();
+    
+    showAlert("Camera Stopped.", "info");
+}
+
+async function sendLogData() {
+    if (logBuffer.length === 0 || !sessionActive) return;
+
+    // Grab the current buffer and clear it immediately
+    const dataToSend = logBuffer.slice();
+    logBuffer = [];
+
+    try {
+        const userName = document.getElementById("user-name").value;
+        // Calls the new /log_pose Flask route
+        const res = await fetch('/log_pose', { 
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ pose_data: dataToSend, user_name: userName })
+        });
+        
+        const data = await res.json();
+        if (data.status !== 'success') {
+            console.warn("Backend log failed:", data.message);
+        }
+    } catch (e) {
+        console.error("Error sending log data to backend:", e);
+        logBuffer.unshift(...dataToSend);
+    }
+}
+
+function startLogInterval() {
+    if (!logInterval) {
+        logInterval = setInterval(sendLogData, LOG_SEND_FREQUENCY_MS);
+    }
+}
+
+function stopLogInterval() {
+    if (logInterval) {
+        clearInterval(logInterval);
+        logInterval = null;
+    }
+    if (logBuffer.length > 0) {
+        sendLogData();
     }
 }
 
 async function startSession(){
     try {
+        if (!cameraInstance) {
+            showAlert("Error: Please start the camera first!", "error");
+            return;
+        }
+        
         const userName = document.getElementById("user-name").value;
         const res = await fetch('/start_session',{
             method:"POST",
@@ -773,8 +1536,11 @@ async function startSession(){
         }
 
         if(data.status === 'success'){
-            document.getElementById('btn-start-session').disabled=true;
-            document.getElementById('btn-end-session').disabled=false;
+            sessionActive = true;
+            logBuffer = []; 
+            startLogInterval();
+            btnStartSession.disabled=true;
+            btnEndSession.disabled=false;
             showAlert("Session Started. Begin your practice!", "success");
         } else {
             showAlert(data.message, "error");
@@ -787,6 +1553,18 @@ async function startSession(){
 
 async function endSession(){
     try {
+        if (!sessionActive) {
+            showAlert("Error: No active session to end.", "error");
+            return;
+        }
+        
+        sessionActive = false; 
+        stopLogInterval();
+        
+        if (logBuffer.length > 0) {
+             await sendLogData();
+        }
+        
         const userName = document.getElementById("user-name").value;
         const res = await fetch('/end_session',{
             method:"POST",
@@ -847,39 +1625,8 @@ function stopStatusUpdates(){
 }
 
 
-// --- 5. HELPER FUNCTION TO SWITCH LANGUAGE (UPDATED) ---
-function switchLanguage(lang) {
-    if (['en', 'mr', 'hi'].includes(lang)) {
-        currentLanguage = lang;
-        
-        // Update static UI elements
-        const texts = {
-            'header-title': { en: '🧘 Yoga Pose Monitor', mr: '🧘 योग मुद्रा मॉनिटर', hi: '🧘 योग मुद्रा मॉनिटर' },
-            'header-subtitle': { en: 'AI-powered real-time pose tracking with instant report generation', mr: 'एआय-शक्तीवर आधारित वास्तविक-वेळ मुद्रा ट्रॅकिंग', hi: 'एआई-संचालित वास्तविक समय आसन ट्रैकिंग' },
-            'btn-start-camera': { en: 'Start Camera', mr: 'कॅमेरा सुरु करा', hi: 'कैमरा शुरू करें' },
-            'btn-stop-camera': { en: 'Stop Camera', mr: 'कॅमेरा थांबवा', hi: 'कैमरा रोकें' },
-            'btn-start-session': { en: 'Start Session', mr: 'सत्र सुरु करा', hi: 'सत्र शुरू करें' },
-            'btn-end-session': { en: 'End Session', mr: 'सत्र समाप्त करा', hi: 'सत्र समाप्त करें' },
-            'btn-download': { en: 'Download Report', mr: 'अहवाल डाउनलोड करा', hi: 'रिपोर्ट डाउनलोड करें' },
-            'btn-back': { en: '← Back to All Poses', mr: '← सर्व आसनांकडे परत जा', hi: '← सभी आसनों पर वापस जाएँ' },
-            'detail-heading-desc': { en: 'Description & Benefits', mr: 'वर्णन आणि फायदे', hi: 'विवरण और लाभ' },
-            'detail-heading-steps': { en: 'Step-by-Step Instructions', mr: 'टप्प्याटप्प्याने सूचना', hi: 'चरण-दर-चरण निर्देश' }
-        };
+// --- 5. HELPER FUNCTION TO SWITCH LANGUAGE (KEPT AS ORIGINAL) ---
 
-        for (const id in texts) {
-            const element = document.getElementById(id);
-            if (element) {
-                element.innerText = texts[id][lang];
-            }
-        }
-        
-        // Regenerate the list to update pose titles/descriptions
-        showYogaList(); 
-        showAlert(`Language set to ${lang === 'mr' ? 'Marathi' : lang === 'hi' ? 'Hindi' : 'English'}`, 'info');
-    }
-}
-
-// --- 6. NAVIGATION FUNCTIONS (CORRECTED) ---
 function generatePoseList() {
     const listContainer = document.getElementById('yoga-list');
     
@@ -939,7 +1686,7 @@ function showPoseDetail(poseKey, stepNumber) {
     // Update detail elements
     document.getElementById('detail-title').innerText = titleText;
     
-    // 🌟 FIX 3: This line now targets the newly added <img> tag in the HTML
+    // This line now targets the newly added <img> tag in the HTML
     const detailImgElement = document.getElementById('detail-img');
     if (poseData.img) {
         detailImgElement.src = poseData.img;
@@ -979,10 +1726,13 @@ function showYogaList() {
     generatePoseList();
 }
 
+
 // Initial calls
-document.addEventListener('DOMContentLoaded', updateStatus); // Call once on load to check login status
+document.addEventListener('DOMContentLoaded', updateStatus); 
 document.addEventListener('DOMContentLoaded', generatePoseList);
 document.addEventListener('DOMContentLoaded', showYogaList);
+document.addEventListener('DOMContentLoaded', setupPoseDetector); 
+
 // --------------------------------------------------------------------------
 </script>
 
