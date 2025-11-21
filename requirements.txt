@@ -3,6 +3,7 @@ numpy>=1.24.3
 pandas>=2.1.4
 reportlab==4.0.7
 Pillow==10.1.0
-firebase-admin
+# firebase-admin REMOVED
+supabase-py
 pyjwt
 gunicorn
