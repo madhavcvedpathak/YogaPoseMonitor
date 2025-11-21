@@ -1,6 +1,3 @@
-# Removed specific versioning on key scientific packages to ensure Python 3.11 compatibility.
-# pip will now select the latest, compatible versions.
-
 flask==3.0.0
 numpy
 pandas
