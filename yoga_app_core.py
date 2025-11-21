@@ -13,11 +13,11 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 import jwt
 from functools import wraps
+import requests # Need this for basic auth check
 
-# --- FIREBASE IMPORTS ---
-import firebase_admin
-from firebase_admin import credentials, firestore, auth
-# --- END FIREBASE IMPORTS ---
+# --- SUPABASE IMPORTS ---
+from supabase import create_client, Client # New Supabase Client
+# --- END SUPABASE IMPORTS ---
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -25,67 +25,55 @@ app = Flask(__name__)
 # Directories (for report storage)
 REPORTS_DIR = "reports"
 os.makedirs(REPORTS_DIR, exist_ok=True)
-# LIVE_JSON_DIR is no longer needed but kept for os.makedirs consistency
-os.makedirs("live_json", exist_ok=True) 
+os.makedirs("live_json", exist_ok=True)
 
-# --- FIREBASE SETUP ---
+# --- SUPABASE SETUP ---
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://ndbugxqiarkwjybgfglu.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5kYnVneHFpYXJrd2p5YmdmZ2x1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE2Nzg0NjUwODcsImV4cCI6MTk5NDA0MTA4N30.C6d...dI") # Replace with your actual anon key
 try:
-    CREDENTIALS_PATH = os.environ.get('FIREBASE_CREDENTIALS', 'firebase_service_account.json')
-    
-    if os.path.exists(CREDENTIALS_PATH) or os.environ.get('FIREBASE_CREDENTIALS'):
-        if CREDENTIALS_PATH.startswith('{'):
-            import json as json_lib
-            cred = credentials.Certificate(json_lib.loads(CREDENTIALS_PATH))
-        else:
-            cred = credentials.Certificate(CREDENTIALS_PATH)
-            
-        if not firebase_admin._apps: # Prevent re-initialization error
-            firebase_admin.initialize_app(cred)
-        db = firestore.client()
-        print("✅ Firebase initialized successfully.")
-    else:
-        print("⚠️ Firebase credentials not found. DB functions disabled.")
-        db = None
-
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print("✅ Supabase initialized successfully.")
+    db = supabase
 except Exception as e:
-    print(f"❌ Error initializing Firebase: {e}")
+    print(f"❌ Error initializing Supabase: {e}")
     db = None
 
 # Global state
-session_active = False 
-pose_log = [] # Populated by the /log_pose endpoint.
-current_user_uid = None
-current_user_display_name = "User" 
+session_active = False
+pose_log = []
+current_user_uid = "default-user" # Changed to default as we rely on API Key
+current_user_display_name = "User"
 last_report_path = None
+# --- NEW: Supabase requires a user table to exist to store the data ---
+SUPABASE_TABLE_NAME = "yoga_sessions"
 
-# --- JWT DECORATOR (KEPT) ---
-def jwt_required(f):
-    """Decorator to protect routes, requiring a valid Firebase ID Token (JWT)."""
+
+# --- API KEY DECORATOR (REPLACING JWT) ---
+def api_key_required(f):
+    """Decorator to protect routes using the Supabase Anon/Public Key as a simple check."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         global current_user_uid, current_user_display_name
+        
+        # We check for the API key in the Authorization header (standard practice)
         auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
+        
+        # Simple check: Ensure the header is present and the key matches the Anon key
+        if not auth_header or auth_header != f"Bearer {SUPABASE_KEY}":
             return jsonify({"status": "error", "message": "Authorization token missing or invalid"}), 401
         
-        id_token = auth_header.split(' ')[1]
-        
-        try:
-            decoded_token = auth.verify_id_token(id_token)
-            current_user_uid = decoded_token['uid']
-            request_data = request.get_json() if request.get_json() else {}
-            user_name_from_request = request_data.get('user_name', f"User_{current_user_uid[-4:]}")
-            current_user_display_name = user_name_from_request
-            
-        except Exception as e:
-            print(f"JWT Verification Failed: {e}")
-            return jsonify({"status": "error", "message": "Invalid or expired authentication token"}), 401
+        # NOTE: For real user management, you must validate a session JWT here.
+        # Since we are using the public Anon Key, we will default the user:
+        current_user_uid = "anonymous_supabase_user" 
+        current_user_display_name = request.get_json().get('user_name', "Supabase User")
             
         return f(*args, **kwargs)
     return decorated_function
-# --- END JWT DECORATOR ---
+# --- END API KEY DECORATOR ---
 
-# --- PDF GENERATION (ADJUSTED TO USE NEW pose_log STRUCTURE) ---
+
+# --- PDF GENERATION (UNCHANGED) ---
+# ... (PDF generation function remains the same as in your original code) ...
 def generate_pdf_report(user_name, end_time):
     """Generate professional AyurSutra PDF report with dynamic recommendations."""
     global last_report_path
@@ -134,9 +122,9 @@ def generate_pdf_report(user_name, end_time):
         pose_counts = df['pose'].value_counts()
         
         data = [['Pose Name', 'Frames Detected', 'Total Time (Seconds)']]
-        for pose, count in pose_counts.items():
+        for pose_name, count in pose_counts.items():
             duration_sec = count * 0.5 # Assuming 1 log entry every ~0.5 seconds from JS
-            data.append([pose, str(count), f"{duration_sec:.1f} s"])
+            data.append([pose_name, str(count), f"{duration_sec:.1f} s"])
         
         table = Table(data, colWidths=[3.5*inch, 1.5*inch, 1.5*inch])
         table.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), AS_BLUE), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke), ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('ALIGN', (0, 1), (0, -1), 'LEFT'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('BOTTOMPADDING', (0, 0), (-1, 0), 10), ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#EBF4FA')), ('GRID', (0, 0), (-1, -1), 0.5, colors.black)]))
@@ -177,18 +165,19 @@ def generate_pdf_report(user_name, end_time):
     return report_path
 # --- END PDF GENERATION ---
 
-# --- FIREBASE STORAGE FUNCTION (KEPT) ---
-def save_session_to_firestore(uid, session_data):
-    """Saves the session data to the Firestore database."""
+
+# --- SUPABASE STORAGE FUNCTION ---
+def save_session_to_supabase(session_data):
+    """Saves the session data to the Supabase database."""
     if db is None: return False
     try:
-        session_ref = db.collection('users').document(uid).collection('yoga_sessions').document()
-        session_ref.set(session_data)
+        # Supabase client insert method
+        data, count = db.table(SUPABASE_TABLE_NAME).insert(session_data).execute()
         return True
     except Exception as e:
-        print(f"❌ Failed to write to Firestore: {e}")
+        print(f"❌ Failed to write to Supabase: {e}")
         return False
-# --- END FIREBASE STORAGE FUNCTION ---
+# --- END SUPABASE STORAGE FUNCTION ---
 
 # Flask Routes
 
@@ -199,7 +188,7 @@ def index():
 
 # --- NEW ROUTE: Receives real-time pose data from the Frontend (JS) ---
 @app.route('/log_pose', methods=['POST'])
-@jwt_required 
+@api_key_required 
 def log_pose():
     """Receives pose data from frontend and appends to pose_log if session is active."""
     global pose_log, session_active
@@ -220,7 +209,7 @@ def log_pose():
 
 
 @app.route('/start_session', methods=['POST'])
-@jwt_required 
+@api_key_required 
 def start_session():
     """Start yoga session (protected route)"""
     global session_active, pose_log
@@ -232,16 +221,16 @@ def start_session():
 
 
 @app.route('/end_session', methods=['POST'])
-@jwt_required 
+@api_key_required 
 def end_session():
-    """End session, calculate points, generate report, and store in Firestore (protected route)"""
+    """End session, calculate points, generate report, and store in Supabase (protected route)"""
     global session_active, current_user_uid, current_user_display_name
     
-    if not session_active or not current_user_uid:
-        return jsonify({'status': 'error', 'message': 'No active session or user logged in.'}), 400
+    if not session_active:
+        return jsonify({'status': 'error', 'message': 'No active session.'}), 400
     
     session_active = False
-    time.sleep(1) 
+    time.sleep(1) # Wait for final logs
     session_end_time = datetime.now()
     
     points_awarded = 0
@@ -253,10 +242,14 @@ def end_session():
         df = pd.DataFrame(pose_log)
         
         if len(pose_log) > 1:
+            # Note: We must convert datetime to ISO string for Supabase/Postgres storage
+            start_time = datetime.fromtimestamp(pose_log[0]['timestamp'])
+            
             duration_seconds = pose_log[-1]['timestamp'] - pose_log[0]['timestamp']
             duration_min = duration_seconds / 60
         else:
             duration_min = 0.0
+            start_time = session_end_time
         
         avg_conf = df['confidence'].mean()
         
@@ -268,18 +261,19 @@ def end_session():
             points_awarded = 99
             limit_message = "Points capped at 99 to comply with limit."
     
-    firestore_data = {
-        'uid': current_user_uid,
+    # Data structure must match your Supabase table columns
+    supabase_data = {
+        'user_uid': current_user_uid,
         'display_name': current_user_display_name,
         'points_awarded': points_awarded,
-        'session_end_time': session_end_time,
+        'session_end_time': session_end_time.isoformat(), # ISO format for Supabase timestamp
         'duration_seconds': duration_seconds,
-        'average_confidence': avg_conf,
-        'report_summary': df['pose'].value_counts().to_dict() if pose_log else {},
-        'report_generated': True
+        'average_confidence': float(avg_conf),
+        'pose_counts': df['pose'].value_counts().to_dict() if pose_log else {},
     }
     
-    storage_success = save_session_to_firestore(current_user_uid, firestore_data)
+    # We send the data as a list of one dictionary to fit Supabase's insert method
+    storage_success = save_session_to_supabase([supabase_data])
     report_path = generate_pdf_report(current_user_display_name, session_end_time)
     
     return jsonify({
@@ -311,7 +305,7 @@ def download_report():
 def session_status():
     """Get current session status"""
     return jsonify({
-        'session_active': session_active, # camera_active removed
+        'session_active': session_active,
         'poses_logged': len(pose_log),
         'current_user_uid': current_user_uid,
         'current_user_display_name': current_user_display_name
