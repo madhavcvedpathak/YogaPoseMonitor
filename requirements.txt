@@ -1,9 +1,11 @@
+# Removed specific versioning on key scientific packages to ensure Python 3.11 compatibility.
+# pip will now select the latest, compatible versions.
+
 flask==3.0.0
-numpy>=1.24.3
-pandas>=2.1.4
+numpy
+pandas
 reportlab==4.0.7
 Pillow==10.1.0
-# firebase-admin REMOVED
 supabase-py
 pyjwt
 gunicorn
