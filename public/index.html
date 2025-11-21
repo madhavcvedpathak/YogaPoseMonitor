@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AyurSutra Yoga Monitor</title>
+
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    
+    <style>
+        /* === CSS STYLES ARE UNCHANGED === */
+        :root {
+            --color-primary: #a777e3;  
+            --color-secondary: #434d58;  
+            --color-accent: #03A9F4;  
+            --color-success: #4caf50;
+            --color-error: #f44336;
+            --shadow-md: 0 4px 15px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.15);
+        }
+
+        /* BASE & TYPOGRAPHY */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: #e0e6f0;  
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 25px;  
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        /* HEADER */
+        .header {
+            padding: 25px 30px;
+            text-align: center;
+            background: linear-gradient(135deg, var(--color-secondary) 0%, var(--color-primary) 100%);
+            color: white;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        .header h1 {
+            font-size: 2.4em;
+            font-weight: 700;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            margin-top: 5px;
+            opacity: 0.9;
+        }
+
+        /* TOP CONTROLS */
+        .top-controls {
+            padding: 15px 30px;
+            background: #ffffff;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;  
+            flex-wrap: wrap;
+            border-bottom: 1px solid #f0f0f0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        
+        .control-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .top-controls input {
+            padding: 10px 16px;
+            font-size: 1em;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            min-width: 150px;  
+            flex-grow: 1;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        .top-controls input:focus {
+            outline: none;
+            border-color: var(--color-primary);
+            box-shadow: 0 0 5px rgba(167, 119, 227, 0.5);
+        }
+
+        /* BUTTON STYLES (Modernized) */
+        .top-controls button {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.9em;
+            transition: all 0.2s ease;
+            box-shadow: var(--shadow-md);
+            white-space: nowrap;  
+        }
+
+        .btn {
+            color: white;
+        }
+        .btn-camera { background: #5D54A4; }  
+        .btn-start { background: var(--color-success); }
+        .btn-stop { background: var(--color-error); }
+        .btn-download { background: #FFA000; }  
+
+        .top-controls button:hover:not(:disabled) {
+            transform: translateY(-2px);  
+            box-shadow: var(--shadow-lg);
+            opacity: 0.9;
+        }
+        .top-controls button:disabled {
+            background: #bdbdbd;
+            cursor: not-allowed;
+            opacity: 0.7;
+            box-shadow: none;
+        }
+        
+        /* LANGUAGE BUTTONS specifics */
+        .control-group button:nth-child(1) {  
+            background: #2E86AB;  
+        }
+        .control-group button:nth-child(2) {  
+            background: #A23B72;  
+        }
+        .control-group button:nth-child(3) {  
+            background: #FF5722;
+        }
+        
+        /* ALERTS */
+        #alert-container {
+            padding: 10px 30px 0;
+        }
+        .alert {
+            padding: 12px;
+            border-left: 5px solid;  
+            border-radius: 8px;
+            margin-bottom: 10px;
+            font-weight: 500;
+            font-size: 0.95em;
+            box-shadow: 0 1px 5px rgba(0, 0, 0, 0.05);
+        }
+
+        .alert-success { background: #e8f5e9; border-color: var(--color-success); color: #388e3c; }
+        .alert-error { background: #ffebee; border-color: var(--color-error); color: #d32f2f; }
+        .alert-info { background: #e3f2fd; border-color: var(--color-accent); color: #1976d2; }
+
+        /* MAIN LAYOUT */
+        .main-content {
+            display: grid;
+            grid-template-columns: 2fr 1.2fr;
+            gap: 30px;  
+            padding: 30px;  
+            align-items: flex-start;
+        }
+
+        /* LEFT CAMERA SECTION (UPDATED FOR CANVAS/VIDEO) */
+        .video-section {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: calc(100vh - 250px);
+            min-height: 500px;
+        }
+        
+        .video-container {
+            background: #1c1c1c;  
+            border-radius: 15px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: var(--shadow-lg);
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        /* NEW: Use canvas for drawing and video for input */
+        #video-input {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: none; /* Hidden video element used as source */
+        }
+        
+        #video-output {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block; /* The visible canvas where landmarks are drawn */
+        }
+
+        .video-overlay {
+            color: white;
+            text-shadow: 0 0 5px rgba(0,0,0,0.8);
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 10;
+        }
+        
+        #pose-display {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: limegreen;
+            font-weight: bold;
+            font-size: 1.2em;
+            text-shadow: 0 0 5px rgba(0,0,0,0.8);
+            z-index: 10;
+        }
+
+
+        /* RIGHT ARTICLE PANEL (KEPT AS ORIGINAL) */
+        .articles-panel {
+            background: #fdfdfd;
+            padding: 25px;
+            border-radius: 15px;
+            height: calc(100vh - 230px);  
+            overflow-y: auto;  
+            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+            border: 1px solid #f5f5f5;
+        }
+
+        .articles-panel h2 {
+            font-size: 1.7em;
+            margin-bottom: 20px;
+            color: var(--color-secondary);
+            border-bottom: 3px solid var(--color-primary);  
+            padding-bottom: 10px;
+        }
+
+        .article-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: 1px solid #eee;
+            /* Added display flex for image/content layout in list view */
+            display: flex;  
+        }
+
+        .article-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 15px rgba(167, 119, 227, 0.2);  
+        }
+        
+        /* Style for images in the pose list cards */
+        .article-img {
+            width: 100px; /* Small fixed width for list thumbnail */
+            height: 100px;
+            object-fit: cover;
+            flex-shrink: 0;
+        }
+
+        .article-content {
+            padding: 15px;
+            flex-grow: 1; /* Allows content to take up remaining space */
+        }
+
+        .article-content h3 {
+            font-size: 1.1em;
+            color: #333;
+        }
+
+        .article-content p {
+            font-size: 0.85em;
+            color: #777;
+        }
+        
+        /* POSE DETAIL VIEW */
+        #pose-detail h2 {
+            color: var(--color-primary);
+        }
+        
+        /* Style for image in the detail view */
+        #detail-img {
+            width: 100%;
+            max-height: 250px;
+            object-fit: cover;
+            border-radius: 10px;
+            margin-top: 10px;
+            margin-bottom: 20px;
+            display: block;
+        }
+        
+        #pose-detail h3 {
+            color: var(--color-secondary);
+            margin-top: 20px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+        #pose-detail ul {
+            padding-top: 10px;
+            list-style-type: decimal;
+            padding-left: 25px; /* Added padding for clean list view */
+            font-size: 0.9em;
+            line-height: 1.6;
+            color: #444;
+        }
+        
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="header">
+        <h1 id="header-title">Yoga Pose Monitor</h1>
+        <p id="header-subtitle">AI-powered real-time pose tracking with instant report generation</p>
+    </div>
+
+    <div class="top-controls">
+        
+        <div class="control-group">
+            <input type="text" id="user-name" value="Yogi" placeholder="Enter your name" readonly>
+            <button class="btn" style="background:#03A9F4;" id="btn-login" onclick="handleLogin()">Log In (Get JWT)</button>
+
+            <button class="btn btn-camera" id="btn-toggle-camera" onclick="toggleCamera()" disabled>Start Camera</button>
+
+            <button class="btn btn-start" id="btn-start-session" onclick="startSession()" disabled>Start Session</button>
+            <button class="btn btn-stop" id="btn-end-session" onclick="endSession()" disabled>End Session</button>
+
+            <button class="btn btn-download" id="btn-download" onclick="downloadReport()" disabled>Download Report</button>
+        </div>
+
+        <div class="control-group">
+            <button class="btn" style="background: #2E86AB;" onclick="switchLanguage('en')">English</button>
+            <button class="btn" style="background: #A23B72;" onclick="switchLanguage('mr')">मराठी</button>
+            <button class="btn" style="background: #FF5722;" onclick="switchLanguage('hi')">हिंदी</button>
+        </div>
+        
+    </div>
+
+    <div id="alert-container"></div>
+
+    <div class="main-content">
+
+        <div class="video-section">
+            <div class="video-container">
+                <video id="video-input" playsinline></video>
+                <canvas id="video-output"></canvas>
+                
+                <div class="video-overlay" id="video-overlay">
+                    <p>🔒 Please Log In first</p>
+                    <p style="font-size: 0.7em; margin-top: 10px; font-weight: 400;">(Required for session tracking)</p>
+                </div>
+                
+                <div id="pose-display"></div>
+            </div>
+        </div>
+
+        <div class="articles-panel">
+            
+            <div id="pose-detail" style="display: none;">
+                <button id="btn-back" class="btn" onclick="showYogaList()"  
+                        style="background: #03A9F4; margin-bottom: 20px; padding: 8px 15px;">
+                    ← Back to All Poses
+                </button>
+                
+                <h2 id="detail-title"></h2>
+                
+                <img id="detail-img" src="" alt="Yoga Pose Detail Image">
+                
+                <div class="article-content">
+                    <h3 id="detail-heading-desc">Description & Benefits</h3>
+                    <p id="detail-desc"></p>
+                    
+                    <h3 id="detail-heading-steps">Step-by-Step Instructions</h3>
+                    <ul id="detail-steps">
+                        </ul>
+                </div>
+            </div>
+
+            <div id="yoga-list">
+                </div>
+
+        </div>
+
+    </div>
+</div>
+
+<script>
+/* === JAVASCRIPT CODE FOR FIREBASE AUTH AND API CALLS (Restored) === */
+
+// --- FIREBASE GLOBAL STATE ---
+const firebaseConfig = {
+    apiKey: "AIzaSyDcyNly1fUDp5u9-cxayzUbOAN1LFHOT2M",  
+    authDomain: "ayursutra-8eea4.firebaseapp.com",
+    databaseURL: "https://ayursutra-8eea4-default-rtdb.firebaseio.com",
+    projectId: "ayursutra-8eea4",
+    storageBucket: "ayursutra-8eea4.firebasestorage.app",
+    messagingSenderId: "350738808548",
+    appId: "1:350738808548:web:f5e24afbba024be5ba76f1"
+};
+
+firebase.initializeApp(firebaseConfig);
+
+let globalIdToken = null; 
+let currentFirebaseUser = null; 
+let statusInterval = null;
+
+let sessionActive = false;
+let currentPose = "---";
+let poseConfidence = 0.00;
+let logBuffer = []; 
+let logInterval = null;
+let cameraInstance = null; 
+let pose = null; 
+const LOG_SEND_FREQUENCY_MS = 2000; 
+const POSE_LOG_RATE = 5; 
+let frameCounter = 0;
+
+
+// --- DOM ELEMENTS ---
+const videoElement = document.getElementById('video-input');
+const canvasElement = document.getElementById('video-output');
+const canvasCtx = canvasElement.getContext('2d');
+const poseDisplay = document.getElementById('pose-display');
+const btnToggleCamera = document.getElementById('btn-toggle-camera');
+const btnStartSession = document.getElementById('btn-start-session');
+const btnEndSession = document.getElementById('btn-end-session');
+const videoOverlay = document.getElementById('video-overlay');
+
+// --- UTILITY FUNCTIONS ---
+
+function handleLogin() {
+    // This is a SIMULATED Firebase Login flow for testing backend integration.
+    // In a real app, this would be retrieved after a successful user sign-in.
+    globalIdToken = "simulated_firebase_jwt_token"; 
+    
+    document.getElementById('btn-toggle-camera').disabled = false;
+    document.getElementById('user-name').removeAttribute('readonly');
+    document.getElementById('btn-login').innerText = "Logged In";
+    document.getElementById('btn-login').disabled = true;
+    document.getElementById('header-subtitle').innerText = "Logged in (Simulated). Ready for tracking.";
+    showAlert("Login Simulated. You are authenticated.", "success");
+}
+
+function getAuthHeaders(contentType = 'application/json') {
+    if (!globalIdToken) {
+        showAlert("Error: Please Log In (Get JWT) first!", "error");
+        document.getElementById('btn-login').disabled = false;
+        throw new Error("User not authenticated.");
+    }
+    // Sends the Firebase ID Token (JWT) for the Flask backend to verify
+    return {
+        'Content-Type': contentType,
+        'Authorization': `Bearer ${globalIdToken}` 
+    };
+}
+
+function showAlert(message, type='info'){
+    const alertContainer = document.getElementById('alert-container');
+    alertContainer.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+    setTimeout(()=> alertContainer.innerHTML='', 4000);
+}
+
+// --- MEDIAPIPE UTILITIES ---
+
+function calculateAngle(a, b, c) {
+    const p1 = [a.x, a.y];
+    const p2 = [b.x, b.y];
+    const p3 = [c.x, c.y];
+    
+    const radians = Math.atan2(p3[1] - p2[1], p3[0] - p2[0]) - Math.atan2(p1[1] - p2[1], p1[0] - p2[0]);
+    let angle = Math.abs(radians * 180.0 / Math.PI);
+    
+    if (angle > 180.0) {
+        angle = 360 - angle;
+    }
+    return angle;
+}
+
+function classifyPose(landmarks) {
+    // MediaPipe landmarks are returned as an array of objects
+    const getPoint = (p) => landmarks[p];  
+    
+    // NOTE: This classification logic MUST mirror the logic in yoga_app_core.py 
+    const LeftShoulder = getPoint(mp_pose.PoseLandmark.LEFT_SHOULDER);
+    const LeftElbow = getPoint(mp_pose.PoseLandmark.LEFT_ELBOW);
+    const LeftWrist = getPoint(mp_pose.PoseLandmark.LEFT_WRIST);
+    const LeftHip = getPoint(mp_pose.PoseLandmark.LEFT_HIP);
+    const LeftKnee = getPoint(mp_pose.PoseLandmark.LEFT_KNEE);
+    const LeftAnkle = getPoint(mp_pose.PoseLandmark.LEFT_ANKLE);
+    
+    const RightShoulder = getPoint(mp_pose.PoseLandmark.RIGHT_SHOULDER);
+    const RightElbow = getPoint(mp_pose.PoseLandmark.RIGHT_ELBOW);
+    const RightWrist = getPoint(mp_pose.PoseLandmark.RIGHT_WRIST);
+    const RightHip = getPoint(mp_pose.PoseLandmark.RIGHT_HIP);
+    const RightKnee = getPoint(mp_pose.PoseLandmark.RIGHT_KNEE);
+    const RightAnkle = getPoint(mp_pose.PoseLandmark.RIGHT_ANKLE);
+    
+    // Calculate angles
+    const leftElbowAngle = calculateAngle(LeftShoulder, LeftElbow, LeftWrist);
+    const rightElbowAngle = calculateAngle(RightShoulder, RightElbow, RightWrist);
+    const leftKneeAngle = calculateAngle(LeftHip, LeftKnee, LeftAnkle);
+    const rightKneeAngle = calculateAngle(RightHip, RightKnee, RightAnkle);
+    const leftHipAngle = calculateAngle(LeftShoulder, LeftHip, LeftKnee);  
+    const rightHipAngle = calculateAngle(RightShoulder, RightHip, RightKnee);
+    const leftShldrAngle = calculateAngle(LeftElbow, LeftShoulder, LeftHip);
+    const rightShldrAngle = calculateAngle(RightElbow, RightShoulder, RightHip);
+    
+    let poseName = "Unknown";
+    let confidence = 0.50;
+    
+    // Simplified Classification Logic (Matching Python Backend Logic)
+    const armsStraight = (leftElbowAngle > 160 && rightElbowAngle > 160);
+    const legsStraight = (leftKneeAngle > 160 && rightKneeAngle > 160);
+
+    // Pranamasana
+    if (legsStraight && leftHipAngle > 160 && rightHipAngle > 160 && leftShldrAngle > 160 && rightShldrAngle > 160) {
+        poseName = "Pranamasana";  
+        confidence = 0.95;
+    }
+    // Hasta Uttanasana
+    else if (legsStraight && leftHipAngle > 160 && rightHipAngle > 160 && leftShldrAngle < 40 && rightShldrAngle < 40 && armsStraight) {
+        poseName = "Hasta Uttanasana";
+        confidence = 0.90;
+    }
+    // Uttanasana
+    else if (legsStraight && leftHipAngle < 90 && rightHipAngle < 90) {
+        poseName = "Uttanasana";
+        confidence = 0.85;
+    }
+    // Ashwa Sanchalanasana (L) 
+    else if (leftKneeAngle < 100 && rightKneeAngle > 160 && leftHipAngle < 100 && rightHipAngle > 140) {
+        poseName = "Ashwa Sanchalanasana (L)";
+        confidence = 0.88;
+    }
+    // Ashwa Sanchalanasana (R)
+    else if (rightKneeAngle < 100 && leftKneeAngle > 160 && rightHipAngle < 100 && leftHipAngle > 140) {
+        poseName = "Ashwa Sanchalanasana (R)";
+        confidence = 0.88;
+    }
+    // Dandasana (Plank)
+    else if (legsStraight && Math.abs(leftHipAngle - 180) < 20 && Math.abs(rightHipAngle - 180) < 20 && armsStraight && Math.abs(leftShldrAngle - 180) < 20 && Math.abs(rightShldrAngle - 180) < 20) {
+        poseName = "Dandasana";  
+        confidence = 0.80;
+    }
+    // Ashtanga Namaskara
+    else if (leftHipAngle > 100 && rightHipAngle > 100 && leftKneeAngle < 100 && rightKneeAngle < 100) {
+        poseName = "Ashtanga Namaskara";
+        confidence = 0.70;
+    }
+    // Bhujangasana (Cobra Pose)
+    else if (leftHipAngle > 160 && rightHipAngle > 160 && leftKneeAngle > 160 && rightKneeAngle > 160 && Math.abs(leftShldrAngle - 180) < 20 && Math.abs(rightShldrAngle - 180) < 20 && leftElbowAngle < 160 && rightElbowAngle < 160) {
+        poseName = "Bhujangasana";
+        confidence = 0.80;
+    }
+    // Adho Mukha Svanasana (Downward Dog)
+    else if (leftHipAngle < 110 && rightHipAngle < 110 && legsStraight && armsStraight) {
+        poseName = "Adho Mukha Svanasana";
+        confidence = 0.92;
+    }
+
+    return {
+        pose: poseName,
+        confidence: confidence.toFixed(2),
+        // We only send pose and confidence to the backend for logging
+    };
+}
+
+
+// --- MEDIAPIPE POSE SETUP & LOGIC ---
+
+function onResults(results) {
+    if (!results.poseLandmarks) {
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        currentPose = "No Pose Detected";
+        poseConfidence = 0.00;
+        poseDisplay.innerText = `Pose: ${currentPose}\nConfidence: ${poseConfidence.toFixed(2)}`;
+        return;
+    }
+
+    // Set canvas dimensions to match video feed
+    canvasElement.width = videoElement.videoWidth;
+    canvasElement.height = videoElement.videoHeight;
+
+    canvasCtx.save();
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    // Draw the image from the video stream onto the canvas
+    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+    // Draw landmarks 
+    drawConnectors(canvasCtx, results.poseLandmarks, mp_pose.POSE_CONNECTIONS,
+                    {color: '#00FF00', lineWidth: 2});
+    drawLandmarks(canvasCtx, results.poseLandmarks,
+                    {color: '#FF0000', lineWidth: 2, radius: 2});
+    
+    canvasCtx.restore();
+    
+    // Pose Classification and Logging
+    const classifiedData = classifyPose(results.poseLandmarks);
+    currentPose = classifiedData.pose;
+    poseConfidence = parseFloat(classifiedData.confidence);
+    
+    // Update live display
+    poseDisplay.innerText = `Pose: ${currentPose}\nConfidence: ${poseConfidence.toFixed(2)}`;
+
+    // Logging to buffer
+    frameCounter++;
+    if (sessionActive && frameCounter % POSE_LOG_RATE === 0) {
+        logBuffer.push({
+            pose: currentPose,
+            confidence: poseConfidence,
+            timestamp: Date.now() / 1000 // UNIX timestamp in seconds
+        });
+    }
+}
+
+function setupPoseDetector() {
+    pose = new Pose({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+    }});
+    
+    pose.setOptions({
+        modelComplexity: 1,  
+        smoothLandmarks: true,
+        enableSegmentation: false,
+        smoothSegmentation: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    pose.onResults(onResults);
+}
+
+// --- CORE APPLICATION FUNCTIONS (Camera, Session, API Calls) ---
+
+function toggleCamera() {
+    if (cameraInstance && cameraInstance.p) {  
+        stopCamera();
+    } else {
+        startCamera();
+    }
+}
+
+async function startCamera() {
+    if (!pose) {
+        setupPoseDetector();
+    }
+    
+    // Start MediaPipe Camera utility
+    cameraInstance = new Camera(videoElement, {
+        onFrame: async () => {
+            await pose.send({image: videoElement});
+        },
+        width: 1280,  
+        height: 720
+    });
+    
+    try {
+        await cameraInstance.start();
+        
+        videoElement.style.display = 'block';
+        videoOverlay.style.display = 'none';
+        btnToggleCamera.innerText = "Stop Camera";
+        btnStartSession.disabled = false;
+        
+        showAlert("Camera Started. Ready for tracking.", "success");
+        
+    } catch (e) {
+        console.error("Camera failed to start:", e);
+        showAlert("❌ Camera access denied or failed. Check permissions.", "error");
+    }
+}
+
+function stopCamera() {
+    if (cameraInstance && cameraInstance.stop) {
+        cameraInstance.stop();
+        cameraInstance = null;
+    }
+    
+    videoElement.style.display = 'none';
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    videoOverlay.style.display = 'block';
+    
+    btnToggleCamera.innerText = "Start Camera";
+    btnStartSession.disabled = true;
+    btnEndSession.disabled = true;
+    
+    sessionActive = false;
+    stopLogInterval();
+    
+    showAlert("Camera Stopped.", "info");
+}
+
+async function sendLogData() {
+    if (logBuffer.length === 0 || !sessionActive) return;
+
+    // Grab the current buffer and clear it immediately
+    const dataToSend = logBuffer.slice();
+    logBuffer = [];
+
+    try {
+        const userName = document.getElementById("user-name").value;
+        // Calls the /log_pose Flask route, uses Firebase JWT header
+        const res = await fetch('/log_pose', {  
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ pose_data: dataToSend, user_name: userName })
+        });
+        
+        const data = await res.json();
+        if (data.status !== 'success') {
+            console.warn("Backend log failed:", data.message);
+        }
+    } catch (e) {
+        console.error("Error sending log data to backend:", e);
+        logBuffer.unshift(...dataToSend);
+    }
+}
+
+function startLogInterval() {
+    if (!logInterval) {
+        logInterval = setInterval(sendLogData, LOG_SEND_FREQUENCY_MS);
+    }
+}
+
+function stopLogInterval() {
+    if (logInterval) {
+        clearInterval(logInterval);
+        logInterval = null;
+    }
+    // Send any remaining data in the buffer immediately
+    if (logBuffer.length > 0) {
+        sendLogData();
+    }
+}
+
+async function startSession(){
+    try {
+        if (!cameraInstance) {
+            showAlert("Error: Please start the camera first!", "error");
+            return;
+        }
+        
+        const userName = document.getElementById("user-name").value;
+        const res = await fetch('/start_session',{
+            method:"POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({user_name: userName})
+        });
+        const data = await res.json();
+        
+        if (res.status === 401) {  
+            showAlert(data.message || "Authentication failed. Please log in again.", "error");
+            return;
+        }
+
+        if(data.status === 'success'){
+            sessionActive = true;
+            logBuffer = []; // Clear log buffer one final time
+            startLogInterval();
+            btnStartSession.disabled=true;
+            btnEndSession.disabled=false;
+            showAlert("Session Started. Begin your practice!", "success");
+        } else {
+            showAlert(data.message, "error");
+        }
+    } catch (e) {
+        console.error(e);
+        showAlert(e.message || "An unexpected error occurred starting the session.", "error");
+    }
+}
+
+async function endSession(){
+    try {
+        if (!sessionActive) {
+            showAlert("Error: No active session to end.", "error");
+            return;
+        }
+        
+        sessionActive = false;  
+        stopLogInterval();
+        
+        // Send any final buffered logs before calling /end_session
+        if (logBuffer.length > 0) {
+              await sendLogData();
+        }
+        
+        const userName = document.getElementById("user-name").value;
+        const res = await fetch('/end_session',{
+            method:"POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify({user_name: userName})
+        });
+        const data = await res.json();
+
+        if (res.status === 401) {
+            showAlert(data.message || "Authentication failed. Please log in again.", "error");
+            return;
+        }
+        
+        if(data.status === "success"){
+            document.getElementById('btn-download').disabled=false;
+            document.getElementById('btn-end-session').disabled=true;
+            document.getElementById('btn-start-session').disabled=false;
+            
+            let message = `Session Ended. You earned **${data.points_awarded}** points. Report Ready!`;
+            if (data.limit_message) {
+                message += ` (${data.limit_message})`;
+            }
+            if (data.storage_status === 'failure') {
+                message += " ⚠️ Data storage failed.";
+            }
+
+            showAlert(message, "success");
+        } else {
+            showAlert(data.message, "error");
+        }
+    } catch (e) {
+        console.error(e);
+        showAlert(e.message || "An unexpected error occurred ending the session.", "error");
+    }
+}
+
+function downloadReport(){
+    window.location.href = "/download_report";
+}
+
+async function updateStatus(){
+    const res = await fetch('/session_status');
+    const data = await res.json();
+    document.getElementById('header-subtitle').innerText = `Logged in as: ${data.current_user_display_name || 'Guest'}`;
+}
+
+function startStatusUpdates(){
+    if(!statusInterval){
+        statusInterval = setInterval(updateStatus, 1000);
+    }
+}
+
+function stopStatusUpdates(){
+    if(statusInterval){
+        clearInterval(statusInterval);
+        statusInterval = null;
+    }
+}
+
+
+// --- 5. HELPER FUNCTION TO SWITCH LANGUAGE (KEPT AS ORIGINAL) ---
+let currentLanguage = 'en';
+
+function switchLanguage(lang) {
+    if (['en', 'mr', 'hi'].includes(lang)) {
+        currentLanguage = lang;
+        
+        // Update static UI elements
+        const texts = {
+            'header-title': { en: '🧘 Yoga Pose Monitor', mr: '🧘 योग मुद्रा मॉनिटर', hi: '🧘 योग मुद्रा मॉनिटर' },
+            'header-subtitle': { en: 'AI-powered real-time pose tracking with instant report generation', mr: 'एआय-शक्तीवर आधारित वास्तविक-वेळ मुद्रा ट्रॅकिंग', hi: 'एआई-संचालित वास्तविक समय आसन ट्रैकिंग' },
+            'btn-toggle-camera': { en: cameraInstance ? 'Stop Camera' : 'Start Camera', mr: cameraInstance ? 'कॅमेरा थांबवा' : 'कॅमेरा सुरु करा', hi: cameraInstance ? 'कैमरा रोकें' : 'कैमरा शुरू करें' },
+            'btn-start-session': { en: 'Start Session', mr: 'सत्र सुरु करा', hi: 'सत्र शुरू करें' },
+            'btn-end-session': { en: 'End Session', mr: 'सत्र समाप्त करा', hi: 'सत्र समाप्त करें' },
+            'btn-download': { en: 'Download Report', mr: 'अहवाल डाउनलोड करा', hi: 'रिपोर्ट डाउनलोड करें' },
+            'btn-back': { en: '← Back to All Poses', mr: '← सर्व आसनांकडे परत जा', hi: '← सभी आसनों पर वापस जाएँ' },
+            'detail-heading-desc': { en: 'Description & Benefits', mr: 'वर्णन आणि फायदे', hi: 'विवरण और लाभ' },
+            'detail-heading-steps': { en: 'Step-by-Step Instructions', mr: 'टप्प्याटप्प्याने सूचना', hi: 'चरण-दर-चरण निर्देश' }
+        };
+
+        for (const id in texts) {
+            const element = document.getElementById(id);
+            if (element) {
+                element.innerText = texts[id][lang];
+            }
+        }
+        
+        // Regenerate the list to update pose titles/descriptions
+        showYogaList();  
+        showAlert(`Language set to ${lang === 'mr' ? 'Marathi' : lang === 'hi' ? 'Hindi' : 'English'}`, 'info');
+    }
+}
+
+// --- 6. NAVIGATION DATA AND FUNCTIONS ---
+
+const SURYA_NAMASKAR_SEQUENCE = [
+    { step: 1, key: 'Pranamasana' },
+    { step: 2, key: 'Hasta Uttanasana' },
+    { step: 3, key: 'Uttanasana' },
+    { step: 4, key: 'Ashwa Sanchalanasana' }, // Left Leg Back (Instructions mention Right Leg)
+    { step: 5, key: 'Dandasana' },
+    { step: 6, key: 'Ashtanga Namaskara' },
+    { step: 7, key: 'Bhujangasana' },
+    { step: 8, key: 'Adho Mukha Svanasana' },
+    { step: 9, key: 'Ashwa Sanchalanasana' }, // Right Leg Back (Opposite of Step 4)
+    { step: 10, key: 'Uttanasana' },
+    { step: 11, key: 'Hasta Uttanasana' },
+    { step: 12, key: 'Pranamasana' }
+];
+
+const YOGA_POSES = {
+    'Pranamasana': {
+        title: {  
+            en: '1. Pranamasana (Prayer Pose)',  
+            mr: '१. प्रणामासन (नमस्कार मुद्रा)',
+            hi: '१. प्रणामासन (प्रार्थना मुद्रा)'
+        },
+        img: 'pictures/pranamasana.jpg',
+        desc: {
+            en: 'This pose establishes neutrality, balance, and stability. It is an opening posture for the Sun Salutation, calming the mind and centering the body.',
+            mr: 'या आसनामुळे तटस्थता, संतुलन आणि स्थिरता स्थापित होते. हे सूर्यनमस्काराची सुरुवात आहे, ज्यामुळे मन शांत होते आणि शरीर केंद्रित होते।',
+            hi: 'यह आसन तटस्थता, संतुलन और स्थिरता स्थापित करता है। यह सूर्य नमस्कार का प्रारंभिक आसन है, जो मन को शांत करता है और शरीर को केंद्रित करता है।'
+        },
+        steps: {
+            en: [
+                'Stand at the front of your mat with feet together (or hip-width apart).',
+                'Bring your palms together in Anjali Mudra (prayer position) at your heart center.',
+                'Keep your spine straight, shoulders relaxed, and breathe deeply.'
+            ],
+            mr: [
+                'आपल्या आसनावर (मॅटवर) दोन्ही पाय एकत्र (किंवा कमरेच्या रुंदीच्या अंतरावर) ठेवून उभे रहा।',
+                'दोन्ही तळहात जोडून अंजली मुद्रेत (नमस्कार स्थितीत) हृदयाजवळ आणा।',
+                'पाठीचा कणा सरळ ठेवा, खांदे शिथिल ठेवा आणि दीर्घ श्वास घ्या।'
+            ],
+            hi: [
+                'अपने मैट पर पैरों को एक साथ (या कूल्हे की चौड़ाई पर) रखकर खड़े हों।',
+                'दोनों हथेलियों को अंजली मुद्रा (प्रार्थना की स्थिति) में हृदय के केंद्र में लाएँ।',
+                'रीढ़ को सीधा, कंधों को ढीला रखें और गहरी साँस लें.'
+            ]
+        },
+        poses: [1, 12]
+    },
+    'Hasta Uttanasana': {
+        title: {  
+            en: '2. Hasta Uttanasana (Raised Arms Pose)',  
+            mr: '२. हस्त उत्तानासन (हात वर उचलण्याची मुद्रा)',
+            hi: '२. हस्त उत्तानासन (भुजाएँ ऊपर उठाएँ)'
+        },
+        img: 'pictures/hasta_utthanasana.jpg',
+        desc: {
+            en: 'A gentle backbend that stretches the front of the body, opens the shoulders, and prepares the spine for deeper movements.',
+            mr: 'एक सौम्य मागचा वाक, जो शरीराच्या पुढील भागाला ताणतो, खांदे उघडतो आणि मणक्याला पुढील हालचालींसाठी तयार करतो।',
+            hi: 'एक सौम्य पीछे की ओर झुकाव, जो शरीर के सामने वाले हिस्से को खींचता है, कंधों को खोलता है, और रीढ़ को गहरी गतिविधियों के लिए तैयार करता है.'
+        },
+        steps: {
+            en: [
+                'Inhale, sweep your arms out and up over your head.',
+                'Keep your arms straight and parallel, or press your palms together.',
+                'Gaze up slightly, engaging your core to protect your lower back.'
+            ],
+            mr: [
+                'श्वास आत घेऊन, आपले हात बाहेरून वर डोक्यावर न्या।',
+                'हात सरळ आणि समांतर ठेवा, किंवा तळहात एकमेकांवर दाबा।',
+                'आपल्या कमरेला आधार देण्यासाठी पोटाचे स्नायू सक्रिय ठेवून थोडे वर पहा।'
+            ],
+            hi: [
+                'श्वास अंदर लेते हुए, अपनी भुजाओं को बाहर से ऊपर सिर के ऊपर ले जाएँ।',
+                'अपनी भुजाओं को सीधा और समानांतर रखें, या हथेलियों को आपस में दबाएँ।',
+                'अपने निचले हिस्से की सुरक्षा के लिए कोर को संलग्न करते हुए थोड़ा ऊपर देखें.'
+            ]
+        },
+        poses: [2, 11]
+    },
+    'Uttanasana': {
+        title: {  
+            en: '3. Uttanasana (Standing Forward Bend)',  
+            mr: '३. उत्तानासन (उभे राहून पुढे वाकणे)',
+            hi: '३. उत्तानासन (खड़े होकर आगे झुकना)'
+        },
+        img: 'pictures/uttanasana.jpg',
+        desc: {
+            en: 'This pose stretches the hamstrings and calves, reduces stress, and calms the nervous system.',
+            mr: 'हे आसन हॅमस्ट्रिंग्ज आणि पोटऱ्यांच्या स्नायूंना ताणते, तणाव कमी करते आणि संपूर्ण मज्जासंस्थेला शांत करते।',
+            hi: 'यह आसन हैमस्ट्रिंग और पिंडली को खींचता है, तनाव कम करता है और तंत्रिका तंत्र को शांत करता है।'
+        },
+        steps: {
+            en: [
+                'Exhale and hinge forward from your hips, keeping your back long.',
+                'Allow your head to hang heavy toward the floor.',
+                'Place your hands flat beside your feet, or hold opposite elbows.',
+                'Keep a slight bend in your knees if your hamstrings feel tight.'
+            ],
+            mr: [
+                'श्वास बाहेर टाकून, कंबरेतून पुढे वाका, पाठ सरळ ठेवा।',
+                'डोके जमिनीकडे जडपणे लोंबकळू द्या।',
+                'हात पायांच्या बाजूला जमिनीवर ठेवा, किंवा विरुद्ध कोपर धरा।',
+                'हॅमस्ट्रिंग्ज (मांडीचे मागचे स्नायू) घट्ट वाटत असल्यास गुडघे थोडे वाकलेले ठेवा।'
+            ],
+            hi: [
+                'श्वास बाहर छोड़ते हुए, अपनी पीठ को सीधा रखते हुए कूल्हों से आगे की ओर झुकें.',
+                'अपने सिर को फर्श की ओर ढीला छोड़ दें.',
+                'हाथों को पैरों के पास सपाट रखें, या विपरीत कोहनियों को पकड़ें.',
+                'यदि हैमस्ट्रिंग तंग महसूस हो तो घुटनों को थोड़ा मोड़कर रखें.'
+            ]
+        },
+        poses: [3, 10]
+    },
+    'Ashwa Sanchalanasana': {
+        title: {  
+            en: '4. Ashwa Sanchalanasana (Equestrian Pose)',  
+            mr: '४. अश्व संचालनासन (अश्वारोहण मुद्रा)',
+            hi: '४. अश्व संचालनासन (अश्वारोही मुद्रा)'
+        },
+        img: 'pictures/ashwa.jpg',
+        desc: {
+            en: 'A deep hip flexor stretch that opens the groin and increases energy flow in the lower body, building focus and stability.',
+            mr: 'एक खोल हिप फ्लेक्सर ताण, जो जांघेचा भाग उघडतो आणि खालच्या शरीरातील ऊर्जा प्रवाह वाढवतो, एकाग्रता आणि स्थिरता निर्माण करतो।',
+            hi: 'एक गहरा कूल्हे के खिंचाव वाला आसन जो कमर को खोलता है और निचले शरीर में ऊर्जा के प्रवाह को बढ़ाता है, एकाग्रता और स्थिरता बनाता है.'
+        },
+        steps: {
+            en: [
+                'Inhale and step your *right* foot back (for Pose 4), bringing the right knee down to the floor.',
+                'Align your front knee directly over your front ankle (90-degree angle).',
+                'Place your hands on the floor or blocks on either side of your front foot.',
+                'Lift your chest and look forward, opening your hips.'
+            ],
+            mr: [
+                'श्वास आत घेऊन, तुमचा *उजवा* पाय मागे घ्या (आसन ४ साठी), उजवा गुडघा जमिनीवर ठेवा।',
+                'पुढचा गुडघा थेट घोट्याच्या वर (९० अंशांवर) ठेवा।',
+                'पुढच्या पायाच्या दोन्ही बाजूला हात जमिनीवर किंवा ब्लॉकवर ठेवा।',
+                'छाती वर उचला आणि समोर पहा, कंबर उघडा।'
+            ],
+            hi: [
+                'श्वास अंदर लेते हुए, अपने *दाएँ* पैर को पीछे ले जाएँ (आसन 4 के लिए), दाएँ घुटने को फर्श पर लाएँ.',
+                'अपने सामने के घुटने को सीधे अपने टखने के ऊपर रखें (90 डिग्री कोण).',
+                'अपने हाथों को फर्श पर या सामने वाले पैर के दोनों ओर ब्लॉक पर रखें.',
+                'अपनी छाती उठाएँ और आगे देखें, कूल्हों को खोलें.'
+            ]
+        },
+        poses: [4, 9]
+    },
+    'Dandasana': {
+        title: {  
+            en: '5. Dandasana (Plank Pose)',  
+            mr: '५. दंडासन (फळीची मुद्रा)',
+            hi: '५. दंडासन (तख्ते जैसा आसन)'
+        },
+        img: 'pictures/dandasana.jpg',
+        desc: {
+            en: 'A fundamental posture that builds heat and strengthens the entire core, arms, shoulders, and spine.',
+            mr: 'एक मूलभूत आसन जे शरीरातील उष्णता वाढवते आणि संपूर्ण कोर (पोटाचे स्नायू), हात, खांदे आणि मणक्याला बळकट करते।',
+            hi: 'एक मूलभूत आसन जो गर्मी पैदा करता है और पूरे कोर, बाहों, कंधों और रीढ़ को मजबूत करता है.'
+        },
+        steps: {
+            en: [
+                'From the low lunge, step your front foot back to meet the back foot.',
+                'Ensure your body forms a straight line from head to heels, like a plank.',
+                'Engage your core and press down strongly through your palms, fingers spread wide.',
+                'Gaze slightly forward, keeping your neck neutral.'
+            ],
+            mr: [
+                'लो लंजमधून, तुमचा पुढचा पाय मागे घ्या आणि मागच्या पायाला जोडा।',
+                'तुमचे शरीर डोक्यापासून टाचेपर्यंत एका सरळ रेषेत आहे याची खात्री करा (फळीसारखे)।',
+                'पोटाचे स्नायू सक्रिय करा आणि तळहातांनी खाली जोराने दाबा, बोटे पसरलेली ठेवा।',
+                'मान सरळ ठेवून थोडेसे समोर पहा।'
+            ],
+            hi: [
+                'लो लंज से, अपने सामने वाले पैर को पीछे वाले पैर से मिलाएँ.',
+                'सुनिश्चित करें कि आपका शरीर सिर से एड़ी तक एक सीधी रेखा बनाता है, एक तख्ते जैसा.',
+                'अपने कोर को संलग्न करें और हथेलियों से ज़ोर से दबाएँ, उंगलियाँ चौड़ी फैली हुई हों.',
+                'अपनी गर्दन को तटस्थ रखते हुए थोड़ा आगे देखें.'
+            ]
+        },
+        poses: [5]
+    },
+    'Ashtanga Namaskara': {
+        title: {  
+            en: '6. Ashtanga Namaskara (Knees–Chest–Chin)',  
+            mr: '६. अष्टांग नमस्कार (गुडघे-छाती-हनुवटी मुद्रा)',
+            hi: '६. अष्टांग नमस्कार (घुटने-छाती-ठोड़ी आसन)'
+        },
+        img: 'pictures/ashtanga.jpeg',
+        desc: {
+            en: 'A posture of salutation where eight limbs (feet, knees, hands, chest, and chin) touch the floor. It strengthens the back muscles and is a preparatory pose for the backbend.',
+            mr: 'या नमस्काराच्या मुद्रेत शरीराचे आठ भाग (दोन पाय, दोन गुडघे, दोन हात, छाती आणि हनुवटी) जमिनीला स्पर्श करतात. हे पाठीच्या स्नायूंना बळकट करते।',
+            hi: 'यह नमस्कार की एक मुद्रा है जहाँ आठ अंग (पैर, घुटने, हाथ, छाती और ठोड़ी) फर्श को छूते हैं. यह पीठ की मांसपेशियों को मजबूत करता है और पीछे झुकने के लिए एक प्रारंभिक मुद्रा है.'
+        },
+        steps: {
+            en: [
+                'From Plank, exhale and gently lower your knees to the floor.',
+                'Slide forward and lower your chest and chin to the floor, keeping your hips lifted.',
+                'Keep your elbows tucked in close to your ribs.',
+                'Only eight points should be touching the ground (not the belly).'
+            ],
+            mr: [
+                'फळीच्या मुद्रेतून (Plank), श्वास बाहेर टाकून हळू हळू गुडघे जमिनीवर आणा।',
+                'पुढे सरकून छाती आणि हनुवटी जमिनीवर टेकवा, कंबर मात्र किंचित वर उचललेली ठेवा।',
+                'कोपर बरगड्यांना लागून ठेवा।',
+                'केवळ आठ भाग जमिनीला स्पर्श करतील याची खात्री करा (पोट नाही)।'
+            ],
+            hi: [
+                'प्लैंक से, साँस छोड़ते हुए धीरे-धीरे अपने घुटनों को फर्श पर लाएँ.',
+                'आगे खिसकें और अपनी छाती और ठोड़ी को फर्श पर नीचे लाएँ, कूल्हों को ऊपर उठा हुआ रखें.',
+                'अपनी कोहनियों को अपनी पसलियों के पास रखें.',
+                'सिर्फ आठ बिंदु ही ज़मीन को छूने चाहिए (पेट नहीं).'
+            ]
+        },
+        poses: [6]
+    },
+    'Bhujangasana': {
+        title: {  
+            en: '7. Bhujangasana (Cobra Pose)',  
+            mr: '७. भुजंगासन (नाग मुद्रा)',
+            hi: '७. भुजंगासन (कोबरा मुद्रा)'
+        },
+        img: 'pictures/bhujangasana.jpeg',
+        desc: {
+            en: 'A back-bending pose that strengthens the spine, opens the chest and shoulders, and relieves stress.',
+            mr: 'एक मागचा वाक देणारे आसन जे मणक्याला बळकट करते, छाती आणि खांदे उघडते आणि तणाव कमी करते।',
+            hi: 'यह एक पीछे की ओर झुकने वाला आसन है जो रीढ़ को मजबूत करता है, छाती और कंधों को खोलता है, और तनाव से राहत देता है.'
+        },
+        steps: {
+            en: [
+                'Slide forward from Ashtanga Namaskara and lay flat on your belly, tops of feet flat on the floor.',
+                'Place your hands flat beneath your shoulders.',
+                'Inhale and lift your chest off the floor, using your back muscles more than your hands.',
+                'Keep your pubic bone grounded and shoulders rolled back.'
+            ],
+            mr: [
+                'अष्टांग नमस्कारातून पुढे सरकून पोटावर झोपा, पायाचे वरचे भाग जमिनीवर सपाट ठेवा।',
+                'हात खांद्याखाली सपाट ठेवा।',
+                'श्वास आत घेऊन, हातांचा कमी वापर करून पाठीच्या स्नायूंनी छाती जमिनीवरून वर उचला।',
+                'पोटाखालील भाग जमिनीवर स्थिर ठेवा आणि खांदे मागे फिरवा।'
+            ],
+            hi: [
+                'अष्टांग नमस्कार से आगे खिसकें और पेट के बल लेट जाएँ, पैरों के ऊपर के हिस्से फर्श पर सपाट हों.',
+                'अपने हाथों को कंधों के नीचे सपाट रखें.',
+                'श्वास अंदर लेते हुए और हाथों के बजाय पीठ की मांसपेशियों का उपयोग करते हुए, अपनी छाती को फर्श से ऊपर उठाएँ.',
+                'अपने जघन क्षेत्र को ज़मीन से लगाए रखें और कंधों को पीछे की ओर घुमाएँ.'
+            ]
+        },
+        poses: [7]
+    },
+    'Adho Mukha Svanasana': {
+        title: {  
+            en: '8. Adho Mukha Svanasana (Downward-Facing Dog)',  
+            mr: '८. अधोमुख श्वानासन (खाली तोंड करून श्वानाची मुद्रा)',
+            hi: '८. अधोमुख श्वानासन (नीचे की ओर मुख किया श्वान)'
+        },
+        img: 'pictures/dog.jpeg',
+        desc: {
+            en: 'A full-body stretch that stretches the shoulders, hamstrings, and calves while strengthening the arms and legs.',
+            mr: 'हा संपूर्ण शरीराला ताण देणारा आसन आहे, जो खांदे, हॅमस्ट्रिंग्ज आणि पोटऱ्यांच्या स्नायूंना ताणतो आणि हात-पाय बळकट करतो।',
+            hi: 'यह एक पूर्ण-शरीर खिंचाव है जो बाहों और पैरों को मजबूत करते हुए कंधों, हैमस्ट्रिंग और पिंडली को फैलाता है.'
+        },
+        steps: {
+            en: [
+                'Tuck your toes, exhale, and lift your hips up and back, forming an inverted V-shape.',
+                'Press down through your hands and imagine pushing the floor away.',
+                'Work to straighten your legs while keeping your spine long.',
+                'Let your head hang naturally between your arms.'
+            ],
+            mr: [
+                'पायाची बोटे आत वळवा, श्वास बाहेर टाकून कंबर वर आणि मागे उचला, उलटा V-आकार बनवा।',
+                'तळहातांनी खाली दाबा आणि जमिनीला दूर ढकलत असल्यासारखे जाणवा।',
+                'मणका सरळ ठेवून पाय सरळ करण्याचा प्रयत्न करा।',
+                'डोके दोन्ही हातांमध्ये नैसर्गिकरित्या लोंबकळू द्या।'
+            ],
+            hi: [
+                'अपने पैर की उंगलियों को अंदर मोड़ें, साँs छोड़ें, और अपने कूल्हों को ऊपर और पीछे उठाएँ, एक उल्टा V-आकार बनाएँ.',
+                'अपने हाथों से नीचे दबाएँ और कल्पना करें कि आप फर्श को दूर धकेल रहे हैं.',
+                'अपनी रीढ़ को सीधा रखते हुए अपने पैरों को सीधा करने का प्रयास करें.',
+                'अपने सिर को स्वाभाविक रूप से अपनी बाहों के बीच लटकने दें.'
+            ]
+        },
+        poses: [8]
+    },
+};
+
+const SURYA_NAMASKAR_SEQUENCE = [
+    { step: 1, key: 'Pranamasana' },
+    { step: 2, key: 'Hasta Uttanasana' },
+    { step: 3, key: 'Uttanasana' },
+    { step: 4, key: 'Ashwa Sanchalanasana' }, // Left Leg Back (Instructions mention Right Leg)
+    { step: 5, key: 'Dandasana' },
+    { step: 6, key: 'Ashtanga Namaskara' },
+    { step: 7, key: 'Bhujangasana' },
+    { step: 8, key: 'Adho Mukha Svanasana' },
+    { step: 9, key: 'Ashwa Sanchalanasana' }, // Right Leg Back (Opposite of Step 4)
+    { step: 10, key: 'Uttanasana' },
+    { step: 11, key: 'Hasta Uttanasana' },
+    { step: 12, key: 'Pranamasana' }
+];
+
+
+// --- JAVASCRIPT CODE STARTS HERE ---
+
+let currentLanguage = 'en';
+
+
+function generatePoseList() {
+    const listContainer = document.getElementById('yoga-list');
+    
+    // Ensure the main header is updated correctly
+    listContainer.innerHTML = `<h2 id="list-header">${currentLanguage === 'mr' ? '📰 सूर्यनमस्काराचे १२ टप्पे' : currentLanguage === 'hi' ? '📰 सूर्य नमस्कार' : '📰 12 Surya Namaskar Yog'}</h2>`;
+
+    SURYA_NAMASKAR_SEQUENCE.forEach(pose => {
+        const fullPoseData = YOGA_POSES[pose.key];
+        if (!fullPoseData) return;
+
+        const card = document.createElement('div');
+        card.className = 'article-card';
+        card.setAttribute('onclick', `showPoseDetail('${pose.key}', ${pose.step})`);
+
+        // Get the localized title and description
+        const localizedTitle = fullPoseData.title[currentLanguage];
+        const localizedDesc = fullPoseData.desc[currentLanguage];
+
+        let titleLabel = `${pose.step}. ${localizedTitle.split('.')[1].trim()}`;
+        
+        // Add specific sequence context (e.g., Opposite Leg) based on step number
+        if (pose.step === 4) {
+             titleLabel += currentLanguage === 'mr' ? ' (उजवा पाय मागे)' : (currentLanguage === 'hi' ? ' (दायाँ पैर पीछे)' : ' (Right Leg Back)');
+        } else if (pose.step === 9) {
+             titleLabel += currentLanguage === 'mr' ? ' (डावा पाय मागे)' : (currentLanguage === 'hi' ? ' (बायाँ पैर पीछे)' : ' (Left Leg Back)');
+        } else if (pose.step === 10 || pose.step === 11) {
+             titleLabel += currentLanguage === 'mr' ? ' (पुनरावृत्ती)' : (currentLanguage === 'hi' ? ' (पुनरावृत्ति)' : ' (Repeat)');
+        } else if (pose.step === 12) {
+             titleLabel += currentLanguage === 'mr' ? ' (शेवट)' : (currentLanguage === 'hi' ? ' (समाप्त)' : ' (Final)');
+        }
+
+        // Include the image for the list card
+        card.innerHTML = `
+            <img class="article-img" src="${fullPoseData.img}" alt="${fullPoseData.title.en}">
+            <div class="article-content">
+                <h3>${titleLabel}</h3>
+                <p>${localizedDesc.substring(0, 80)}...</p>
+            </div>
+        `;
+        listContainer.appendChild(card);
+    });
+}
+
+
+function showPoseDetail(poseKey, stepNumber) {
+    const poseData = YOGA_POSES[poseKey];
+    if (!poseData) {
+        showAlert('Pose details not found.', 'error');
+        return;
+    }
+
+    // Get localized text
+    const titleText = `${stepNumber}. ${poseData.title[currentLanguage].split('.')[1].trim()}`;
+    const descText = poseData.desc[currentLanguage];
+    const stepsArray = poseData.steps[currentLanguage];
+
+    // Update detail elements
+    document.getElementById('detail-title').innerText = titleText;
+    
+    // This line now targets the newly added <img> tag in the HTML
+    const detailImgElement = document.getElementById('detail-img');
+    if (poseData.img) {
+        detailImgElement.src = poseData.img;
+        detailImgElement.style.display = 'block';
+        detailImgElement.alt = poseData.title.en;
+    } else {
+         detailImgElement.style.display = 'none';
+    }
+
+
+    document.getElementById('detail-desc').innerText = descText;
+    
+    // Update Headings using their IDs (set via switchLanguage or directly here)
+    document.getElementById('detail-heading-desc').innerText = currentLanguage === 'mr' ? 'वर्णन आणि फायदे' : (currentLanguage === 'hi' ? 'विवरण और लाभ' : 'Description & Benefits');
+    document.getElementById('detail-heading-steps').innerText = currentLanguage === 'mr' ? 'टप्प्याटप्प्याने सूचना' : (currentLanguage === 'hi' ? 'चरण-दर-चरण निर्देश' : 'Step-by-Step Instructions');
+
+    // Update Back button text
+    document.getElementById('btn-back').innerText = currentLanguage === 'mr' ? '← सर्व आसनांकडे परत जा' : (currentLanguage === 'hi' ? '← सभी आसनों पर वापस जाएँ' : '← Back to All Poses');
+
+
+    const stepsList = document.getElementById('detail-steps');
+    stepsList.innerHTML = ''; // Clear previous steps
+    stepsArray.forEach(step => {
+        const li = document.createElement('li');
+        li.innerText = step;
+        stepsList.appendChild(li);
+    });
+
+    // Toggle visibility
+    document.getElementById('yoga-list').style.display = 'none';
+    document.getElementById('pose-detail').style.display = 'block';
+}
+
+function showYogaList() {
+    document.getElementById('pose-detail').style.display = 'none';
+    document.getElementById('yoga-list').style.display = 'block';
+    generatePoseList();
+}
+
+
+// Initial calls
+document.addEventListener('DOMContentLoaded', updateStatus);  
+document.addEventListener('DOMContentLoaded', generatePoseList);
+document.addEventListener('DOMContentLoaded', showYogaList);
+document.addEventListener('DOMContentLoaded', setupPoseDetector);  
+
+// --------------------------------------------------------------------------
+</script>
+
+</body>
+</html>
