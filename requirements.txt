@@ -3,6 +3,6 @@ numpy
 pandas
 reportlab==4.0.7
 Pillow==10.1.0
-supabase-py
+firebase-admin
 pyjwt
 gunicorn
