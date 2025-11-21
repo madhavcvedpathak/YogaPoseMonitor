@@ -325,3 +325,5 @@ def session_status():
         'current_user_uid': current_user_uid,
         'current_user_display_name': current_user_display_name
     })
+
+application = app
